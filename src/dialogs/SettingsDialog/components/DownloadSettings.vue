@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useStore } from '../../../store.ts'
-import { NCheckbox, NInput, NRadio, NRadioGroup, NTooltip, useMessage } from 'naive-ui'
+import { NCheckbox, NInput, NInputNumber, NRadio, NRadioGroup, NTooltip, useMessage } from 'naive-ui'
 
 const store = useStore()
 
 const message = useMessage()
 
 const dirFmt = ref<string>(store.config?.dirFmt ?? '')
+const missingImageThreshold = ref<number>(store.config?.missingImageThreshold ?? 5)
 
 watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], () => {
   message.warning('切换线路后可能需要重新登录')
@@ -118,7 +119,98 @@ watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], 
       </template>
     </n-tooltip>
 
+    <span class="font-bold mt-2">章节归档</span>
+    <n-radio-group v-model:value="store.config.chapterArchiveFormat">
+      <n-tooltip placement="top" trigger="hover">
+        <template #trigger>
+          <n-radio value="None">不打包</n-radio>
+        </template>
+        下载完成后保留章节目录，不做额外处理。
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover">
+        <template #trigger>
+          <n-radio value="Zip">打包为 .zip</n-radio>
+        </template>
+        下载完成后把章节目录（含图片与章节元数据）打包为 <span class="rounded bg-gray-500 px-1 text-white">.zip</span>，
+        再删除原目录；导出 PDF / CBZ 时会自动解压。
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover">
+        <template #trigger>
+          <n-radio value="Cbz">打包为 .cbz</n-radio>
+        </template>
+        下载完成后把章节目录打包为 <span class="rounded bg-gray-500 px-1 text-white">.cbz</span>（漫画阅读器约定格式）；
+        适合只在本地用阅读器查看的场景。
+      </n-tooltip>
+    </n-radio-group>
+
+    <span class="font-bold mt-2">缺失图片容忍</span>
+    <div class="flex items-center gap-2">
+      <n-tooltip placement="top" trigger="hover" :width="350">
+        <template #trigger>
+          <n-input-number
+            v-model:value="missingImageThreshold"
+            size="small"
+            :min="0"
+            :max="9999"
+            :show-button="false"
+            placeholder="缺失图片容忍阈值"
+            @blur="store.config.missingImageThreshold = missingImageThreshold"
+            @keydown.enter="store.config.missingImageThreshold = missingImageThreshold" />
+        </template>
+        <div>
+          当一个章节下载结束时，若缺失的图片数 <span class="rounded bg-gray-500 px-1 text-white">≤</span> 此阈值，则视为下载成功（仅在日志中告警），不会让整章作废。
+        </div>
+        <div class="text-orange mt-1">
+          设为 <span class="rounded bg-gray-500 px-1 text-white">0</span> 时维持上游原行为：只要缺一张就整章失败，需要手动重试整章。
+        </div>
+        <div class="text-gray-500 mt-1">
+          失败的图片索引会写入日志（搜索 <span class="rounded bg-gray-500 px-1 text-white">chapter-download-warning</span> 或 <span class="rounded bg-gray-500 px-1 text-white">chapter-download-failure</span>），便于手动补图。
+        </div>
+      </n-tooltip>
+      <span class="text-gray-500">张</span>
+    </div>
+
+    <span class="font-bold mt-2">中文归一化</span>
+    <n-radio-group v-model:value="store.config.chineseNormalization">
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-radio value="None">不转换</n-radio>
+        </template>
+        保持从网站拿到的原文（简中、繁中、日文、韩文等）落地到磁盘目录。
+        <div class="text-orange mt-1">同一本漫画在不同登录语言下会被生成不同目录。</div>
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-radio value="ToSimplified">转为简体</n-radio>
+        </template>
+        <span class="rounded bg-gray-500 px-1 text-white">默认</span>。把繁中、日文（汉字部分）转为简体再创建目录，避免同一本漫画因为网站返回的语言不同被开成多个目录。
+        <div class="text-gray-500 mt-1">韩文（Hangul）、日文假名、英文、数字、标点不会被 OpenCC 连带改写。</div>
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-radio value="ToTraditional">转为繁体</n-radio>
+        </template>
+        把简中、日文（汉字部分）转为繁体再创建目录。
+        <div class="text-gray-500 mt-1">韩文（Hangul）、日文假名、英文、数字、标点不会被 OpenCC 连带改写。</div>
+      </n-tooltip>
+    </n-radio-group>
+
     <span class="font-bold mt-2">其他</span>
     <n-checkbox class="w-fit" v-model:checked="store.config.shouldDownloadCover">下载封面</n-checkbox>
+    <div class="flex items-center gap-2 mt-2">
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-checkbox v-model:checked="store.config.disableErrorNotifications">
+            关闭错误通知弹窗
+          </n-checkbox>
+        </template>
+        <div>
+          启用后，下载、同步等过程中的失败不再以右下角弹窗的形式打扰你，但仍会写入实时日志与文件日志。
+        </div>
+        <div class="text-gray-500 mt-1">
+          适合下载任务多、网络偶尔抽风导致频繁失败的场景；事后可以从日志或日志对话框里排查。
+        </div>
+      </n-tooltip>
+    </div>
   </div>
 </template>

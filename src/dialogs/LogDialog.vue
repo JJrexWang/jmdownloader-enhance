@@ -173,7 +173,7 @@ onMounted(() => {
       liveLogRecords.value.push(logRecord)
       triggerRef(liveLogRecords)
 
-      if (logRecord.level === 'ERROR') {
+      if (logRecord.level === 'ERROR' && store.config?.disableErrorNotifications !== true) {
         notification.error({
           title: (logRecord.fields['err_title'] as string) || 'Error',
           description: (logRecord.fields['message'] as string) || 'Unknown Error',

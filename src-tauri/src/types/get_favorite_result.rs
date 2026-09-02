@@ -11,7 +11,7 @@ use crate::{
         CategoryRespData, CategorySubRespData, ComicInFavoriteRespData, FavoriteFolderRespData,
         GetFavoriteRespData,
     },
-    utils,
+    extensions::AppHandleExt,
 };
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -29,7 +29,7 @@ impl GetFavoriteResult {
         app: &AppHandle,
         resp_data: GetFavoriteRespData,
     ) -> eyre::Result<GetFavoriteResult> {
-        let id_to_dir_map = utils::create_id_to_dir_map(app)?;
+        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
 
         let list = resp_data
             .list

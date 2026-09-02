@@ -383,6 +383,11 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
                 let err_title = format!("下载收藏夹过程中，获取漫画`{comic_title}`失败，已跳过");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
+                let _ = DownloadAllFavoritesEvent::FailedComic {
+                    comic_id: None,
+                    comic_title: comic_title.clone(),
+                }
+                .emit(&app);
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
@@ -395,13 +400,23 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
                 let err = err.wrap_err("可能是频率太高，请手动去`配置`里调整`下载整个收藏夹时，每处理完一个收藏夹中的漫画后休息`");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
+                let _ = DownloadAllFavoritesEvent::FailedComic {
+                    comic_id: Some(comic_id),
+                    comic_title: comic_title.clone(),
+                }
+                .emit(&app);
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
         };
 
         let current = (i + 1) as i64;
-        let _ = DownloadAllFavoritesEvent::GetComicsProgress { current, total }.emit(&app);
+        let _ = DownloadAllFavoritesEvent::GetComicsProgress {
+            current,
+            total,
+            current_comic_title: comic.name.clone(),
+        }
+        .emit(&app);
 
         // 给每个漫画未下载的章节创建下载任务
         let chapter_infos: Vec<&ChapterInfo> = comic
@@ -461,13 +476,30 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
     let interval_sec = config.read().update_downloaded_comics_interval_sec;
     let _ = UpdateDownloadedComicsEvent::GetComicStart { total }.emit(&app);
 
+    // 一次性构建已下载漫画 id -> 目录 的映射，避免每个漫画都触发一次全目录 walk。
+    // 后台章节下载完成触发的 invalidate 只会让本次循环结束后失效，下一次调用会重建。
+    let id_to_dir_map = match app.get_downloaded_comics_index().get_or_build(&app) {
+        Ok(map) => map,
+        Err(err) => {
+            return Err(CommandError::from(
+                "更新库存过程中，构建已下载漫画索引失败",
+                err,
+            ));
+        }
+    };
+
     for (i, downloaded_comic) in downloaded_comics.into_iter().enumerate() {
-        let comic_title = &downloaded_comic.name;
+        let comic_title = downloaded_comic.name.clone();
         let comic_id = downloaded_comic.id;
         let current = (i + 1) as i64;
-        let _ = UpdateDownloadedComicsEvent::GetComicProgress { current, total }.emit(&app);
+        let _ = UpdateDownloadedComicsEvent::GetComicProgress {
+            current,
+            total,
+            current_comic_title: comic_title.clone(),
+        }
+        .emit(&app);
 
-        let comic = match utils::get_comic(app.clone(), comic_id)
+        let comic = match utils::get_comic_with_map(app.clone(), comic_id, Arc::clone(&id_to_dir_map))
             .await
             .wrap_err(format!("获取ID为`{comic_id}`的漫画失败"))
         {
@@ -477,6 +509,11 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
                 let err = err.wrap_err("可能是频率太高，请手动去`配置`里调整`更新库存时，每处理完一个已下载的漫画后休息`");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
+                let _ = UpdateDownloadedComicsEvent::FailedComic {
+                    comic_id,
+                    comic_title: comic_title.clone(),
+                }
+                .emit(&app);
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
@@ -624,7 +661,12 @@ pub fn get_downloaded_comics(app: AppHandle) -> Vec<Comic> {
 
     let mut downloaded_comics = Vec::new();
     for (metadata_path, _) in metadata_path_with_modify_time {
-        match Comic::from_metadata(&metadata_path) {
+        // 用当前配置的 dir_fmt 渲染章节目录名，便于精确匹配 zip 文件名
+        let config = app.get_config();
+        let config = config.read();
+        let dir_fmt = config.dir_fmt.clone();
+        let mode = config.chinese_normalization;
+        match Comic::from_metadata(&metadata_path, &dir_fmt, mode) {
             Ok(comic) => downloaded_comics.push(comic),
             Err(err) => {
                 let err_title = "获取已下载漫画的过程中遇到错误，已跳过";
@@ -755,11 +797,15 @@ pub fn get_logs_dir_size(app: AppHandle) -> CommandResult<u64> {
 #[specta::specta]
 #[instrument(level = "error", skip_all, fields(comic_id = comic.id, comic_title = comic.name))]
 pub fn get_synced_comic(app: AppHandle, mut comic: Comic) -> CommandResult<Comic> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步Comic字段失败", err))?;
+    let config = app.get_config();
+    let config = config.read();
+    let dir_fmt = config.dir_fmt.clone();
+    let mode = config.chinese_normalization;
 
     comic
-        .update_fields(&id_to_dir_map)
+        .update_fields(&id_to_dir_map, &dir_fmt, mode)
         .map_err(|err| CommandError::from("同步Comic字段失败", err))?;
 
     Ok(comic)
@@ -773,7 +819,7 @@ pub fn get_synced_comic_in_favorite(
     app: AppHandle,
     mut comic: ComicInFavorite,
 ) -> CommandResult<ComicInFavorite> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步ComicInFavorite字段失败", err))?;
 
     comic.update_fields(&id_to_dir_map);
@@ -789,7 +835,7 @@ pub fn get_synced_comic_in_search(
     app: AppHandle,
     mut comic: ComicInSearch,
 ) -> CommandResult<ComicInSearch> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步ComicInSearch字段失败", err))?;
 
     comic.update_fields(&id_to_dir_map);
@@ -805,7 +851,7 @@ pub fn get_synced_comic_in_weekly(
     app: AppHandle,
     mut comic: ComicInWeekly,
 ) -> CommandResult<ComicInWeekly> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步ComicInWeekly字段失败", err))?;
 
     comic.update_fields(&id_to_dir_map);

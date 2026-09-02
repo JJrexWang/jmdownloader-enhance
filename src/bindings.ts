@@ -274,7 +274,11 @@ isPdfExported: boolean;
 /**
  * 是否曾导出过 CBZ
  */
-isCbzExported: boolean; isDownloaded?: boolean | null; chapterDownloadDir?: string | null }
+isCbzExported: boolean; 
+/**
+ * 章节是否被打包成压缩包（章节下载目录已替换为单个压缩包文件）
+ */
+isArchived: boolean; isDownloaded?: boolean | null; chapterDownloadDir?: string | null }
 export type Comic = { id: number; name: string; addtime: string; description: string; total_views: string; likes: string; chapterInfos: ChapterInfo[]; series_id: string; comment_total: string; author: string[]; tags: string[]; works: string[]; actors: string[]; related_list: RelatedListRespData[]; liked: boolean; is_favorite: boolean; is_aids: boolean; isDownloaded?: boolean | null; comicDownloadDir?: string | null }
 export type ComicInFavorite = { id: number; author: string; description: string | null; name: string; latestEp: string | null; latestEpAid: string | null; image: string; category: CategoryRespData; categorySub: CategorySubRespData; isDownloaded: boolean; comicDownloadDir: string }
 export type ComicInSearch = { id: number; author: string; name: string; image: string; category: CategoryRespData; categorySub: CategorySubRespData; liked: boolean; isFavorite: boolean; updateAt: number; isDownloaded: boolean; comicDownloadDir: string }
@@ -284,8 +288,28 @@ export type Config = { username: string; password: string; downloadDir: string; 
 /**
  * 导出跳过模式
  */
-exportSkipMode: ExportSkipMode }
-export type DownloadAllFavoritesEvent = { event: "GetFavoritesStart" } | { event: "GetComicsProgress"; data: { current: number; total: number } } | { event: "StartCreateDownloadTasks"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreatingDownloadTask"; data: { comicId: number; current: number } } | { event: "EndCreateDownloadTasks"; data: { comicId: number } } | { event: "GetComicsEnd" }
+exportSkipMode: ExportSkipMode; 
+/**
+ * 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
+ */
+chapterArchiveFormat: ChapterArchiveFormat; 
+/**
+ * 章节下载缺失图片容忍阈值：当缺失图片数 ≤ 此值时，视为下载成功并降级为告警
+ */
+missingImageThreshold: number; 
+/**
+ * 简繁中文归一化：用于消除同一本漫画在不同登录语言下因简繁差异开新目录的问题。
+ * 日文、韩文、英文等其他脚本不会被 OpenCC 错误连带转换。
+ */
+chineseNormalization: ChineseNormalization; 
+/**
+ * 是否禁用 ERROR 级日志的 GUI 弹窗通知。启用后失败仍会写入实时日志与文件日志。
+ */
+disableErrorNotifications: boolean }
+export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
+export type ChineseNormalization = "None" | "ToSimplified" | "ToTraditional"
+export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
+export type DownloadAllFavoritesEvent = { event: "GetFavoritesStart" } | { event: "GetComicsProgress"; data: { current: number; total: number; currentComicTitle: string } } | { event: "StartCreateDownloadTasks"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreatingDownloadTask"; data: { comicId: number; current: number } } | { event: "EndCreateDownloadTasks"; data: { comicId: number } } | { event: "FailedComic"; data: { comicId: number | null; comicTitle: string } } | { event: "GetComicsEnd" }
 export type DownloadEvent = { event: "Speed"; data: { speed: string } } | { event: "Sleeping"; data: { chapterId: number; remainingSec: number } } | { event: "TaskCreate"; data: { state: DownloadTaskState; comic: Comic; chapterInfo: ChapterInfo; downloadedImgCount: number; totalImgCount: number } } | { event: "TaskDelete"; data: { chapterId: number } } | { event: "TaskUpdate"; data: { chapterId: number; state: DownloadTaskState; downloadedImgCount: number; totalImgCount: number } }
 export type DownloadFormat = "Jpeg" | "Png" | "Webp"
 export type DownloadTaskState = "Pending" | "Downloading" | "Paused" | "Completed" | "Failed"
@@ -323,7 +347,7 @@ export type RelatedListRespData = { id: string; author: string; name: string; im
 export type SearchResult = { searchQuery: string; total: number; content: ComicInSearch[] }
 export type SearchResultVariant = { SearchResult: SearchResult } | { Comic: Comic }
 export type SearchSort = "Latest" | "View" | "Picture" | "Like"
-export type UpdateDownloadedComicsEvent = { event: "GetComicStart"; data: { total: number } } | { event: "GetComicProgress"; data: { current: number; total: number } } | { event: "CreateDownloadTasksStart"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreateDownloadTaskProgress"; data: { comicId: number; current: number } } | { event: "CreateDownloadTasksEnd"; data: { comicId: number } } | { event: "GetComicEnd" }
+export type UpdateDownloadedComicsEvent = { event: "GetComicStart"; data: { total: number } } | { event: "GetComicProgress"; data: { current: number; total: number; currentComicTitle: string } } | { event: "CreateDownloadTasksStart"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreateDownloadTaskProgress"; data: { comicId: number; current: number } } | { event: "CreateDownloadTasksEnd"; data: { comicId: number } } | { event: "FailedComic"; data: { comicId: number; comicTitle: string } } | { event: "GetComicEnd" }
 export type WeeklyType = { id: string; title: string }
 
 /** tauri-specta globals **/

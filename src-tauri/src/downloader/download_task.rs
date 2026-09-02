@@ -7,6 +7,8 @@ use std::{
     time::Duration,
 };
 
+use parking_lot::Mutex;
+
 use eyre::{eyre, OptionExt, WrapErr};
 use tauri::AppHandle;
 use tauri_specta::Event;
@@ -18,6 +20,8 @@ use tokio::{
 use tracing::{instrument, Instrument};
 
 use crate::{
+    archive,
+    config::ChapterArchiveFormat,
     downloader::{
         download_img_task::{calculate_block_num, DownloadImgTask},
         download_task_state::DownloadTaskState,
@@ -36,6 +40,8 @@ pub struct DownloadTask {
     pub delete_sender: watch::Sender<()>,
     pub downloaded_img_count: Arc<AtomicU32>,
     pub total_img_count: Arc<AtomicU32>,
+    /// 下载失败的图片索引（0-based），用于在章节完成时汇总日志。
+    pub failed_indexes: Arc<Mutex<Vec<usize>>>,
 }
 
 impl DownloadTask {
@@ -71,6 +77,7 @@ impl DownloadTask {
             delete_sender,
             downloaded_img_count: Arc::new(AtomicU32::new(0)),
             total_img_count: Arc::new(AtomicU32::new(0)),
+            failed_indexes: Arc::new(Mutex::new(Vec::new())),
         });
 
         tauri::async_runtime::spawn(task.clone().process());
@@ -189,17 +196,61 @@ impl DownloadTask {
 
         let downloaded_img_count = self.downloaded_img_count.load(Ordering::Relaxed);
         let total_img_count = self.total_img_count.load(Ordering::Relaxed);
-        if downloaded_img_count != total_img_count {
-            let err_title = "下载不完整";
-            let message =
-                eyre!("总共有`{total_img_count}`张图片，但只下载了`{downloaded_img_count}`张")
-                    .to_message();
-            tracing::error!(err_title, message);
+        let missing_count = total_img_count.saturating_sub(downloaded_img_count);
 
-            self.set_state(DownloadTaskState::Failed);
-            self.emit_download_task_update_event();
+        // 收集失败的图片索引（0-based），并按 1-based 排序后写入日志，便于用户排查。
+        let failed_indexes_1based = {
+            let mut guard = self.failed_indexes.lock();
+            guard.sort_unstable();
+            guard.iter().map(|i| i + 1).collect::<Vec<_>>()
+        };
 
-            return;
+        if missing_count > 0 {
+            let threshold = self.app.get_config().read().missing_image_threshold;
+            let ctx = format!(
+                "comic_id={} comic_title={} chapter_id={} chapter_title={} order={} total={} downloaded={} missing={} missing_indexes={:?} threshold={}",
+                self.comic.id,
+                self.comic.name,
+                self.chapter_info.chapter_id,
+                self.chapter_info.chapter_title,
+                self.chapter_info.order,
+                total_img_count,
+                downloaded_img_count,
+                missing_count,
+                failed_indexes_1based,
+                threshold,
+            );
+
+            if missing_count > threshold {
+                // 超过阈值：保持原行为，整章作废
+                let err_title = "下载不完整";
+                let message = eyre!(
+                    "总共有`{total_img_count}`张图片，但只下载了`{downloaded_img_count}`张，超过阈值`{threshold}`"
+                )
+                .to_message();
+                tracing::error!(err_title, message);
+                tracing::error!(
+                    target: "chapter_download_failure",
+                    "[chapter-download-failure] {ctx}"
+                );
+
+                self.set_state(DownloadTaskState::Failed);
+                self.emit_download_task_update_event();
+
+                return;
+            }
+
+            // 在阈值内：降级为告警，继续走完流程（重命名 + 保存元数据 + 可能的归档）
+            let warn_title = "章节下载不完整（已容忍）";
+            let warn_msg = format!(
+                "总共有`{total_img_count}`张图片，下载了`{downloaded_img_count}`张，缺失`{missing_count}`张（在阈值`{threshold}`内），将继续处理已下载的图片"
+            );
+            tracing::warn!(warn_title, warn_msg);
+            tracing::warn!(
+                target: "chapter_download_failure",
+                "[chapter-download-warning] {ctx}"
+            );
+            // 仍以 Completed 收尾，UI 上的 `downloadedImgCount/totalImgCount` 比例会自动反映缺图
         }
 
         if let Err(err) = self.rename_temp_download_dir(&temp_download_dir) {
@@ -213,11 +264,39 @@ impl DownloadTask {
             return;
         }
 
+        // 必须在打包前先把 章节元数据.json 写到章节目录里，否则 pack 之后的 zip/cbz
+        // 不包含元数据，update_chapter_infos_fields 在重新加载时无法从归档里读到
+        // chapterId，会把这个章节当成「未下载」；本地库存的更新库存也会因为同一本
+        // 漫画检测不到任何已下载章节而把整本跳过。self.chapter_info 此时
+        // is_archived 仍是默认值 false，所以 save_chapter_metadata 不会被短路。
         if let Err(err) = self.chapter_info.save_chapter_metadata() {
             let err_title = "保存章节元数据失败";
             let message = err.to_message();
             tracing::error!(err_title, message);
         }
+
+        // 如果配置了章节归档，则把章节目录（已包含 章节元数据.json 与所有图片）打包成压缩包，
+        // 然后删除原目录，并将漫画元数据中的章节路径更新为压缩包路径。
+        // 归档完成后章节元数据已经位于压缩包内部，因此不需要再调用 save_chapter_metadata。
+        let chapter_archive_format = self.app.get_config().read().chapter_archive_format;
+        let chapter_is_archived = if !matches!(chapter_archive_format, ChapterArchiveFormat::None) {
+            match self.pack_chapter_as_archive(chapter_archive_format) {
+                Ok(()) => true,
+                Err(err) => {
+                    let err_title = "打包章节归档失败";
+                    let message = err.to_message();
+                    tracing::error!(err_title, message);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        // pack 成功时元数据已经位于压缩包内部；pack 失败时上面也已经写过了，因此这里不重复落盘
+        let _ = chapter_is_archived;
+
+        // 章节落盘后失效已下载索引缓存，下次读取时重建
+        self.app.get_downloaded_comics_index().invalidate();
 
         self.sleep_between_chapter().await;
         tracing::info!("章节下载成功");
@@ -296,6 +375,54 @@ impl DownloadTask {
             temp_download_dir.display(),
             chapter_download_dir.display()
         ))?;
+
+        Ok(())
+    }
+
+    #[instrument(level = "error", skip_all, fields(format = ?format))]
+    fn pack_chapter_as_archive(&self, format: ChapterArchiveFormat) -> eyre::Result<()> {
+        let chapter_download_dir = self
+            .chapter_info
+            .chapter_download_dir
+            .as_ref()
+            .ok_or_eyre("`chapter_download_dir`字段为`None`")?
+            .clone();
+        let archive_path = archive::chapter_archive_path(
+            &chapter_download_dir,
+            self.chapter_info.chapter_id,
+            format,
+        )
+        .wrap_err("计算章节归档路径失败")?;
+
+        // 1. 把章节目录（含 章节元数据.json 与所有图片）打包成压缩包
+        archive::pack_dir_as_archive(&chapter_download_dir, &archive_path, format)
+            .wrap_err("打包章节归档失败")?;
+
+        // 2. 删除原目录
+        std::fs::remove_dir_all(&chapter_download_dir).wrap_err(format!(
+            "删除`{}`失败",
+            chapter_download_dir.display()
+        ))?;
+
+        // 3. 更新漫画元数据中指向归档的字段并落盘
+        //    注意：self.comic 是 Arc<Comic>，这里克隆一份可变副本，
+        //    用于修改并保存；self.comic 自身的引用仍指向原 Comic，
+        //    但后续读取会从漫画元数据文件重新构建，因此不会受影响。
+        let mut owned = Arc::clone(&self.comic);
+        {
+            let comic_mut = Arc::make_mut(&mut owned);
+            if let Some(chapter) = comic_mut
+                .chapter_infos
+                .iter_mut()
+                .find(|c| c.chapter_id == self.chapter_info.chapter_id)
+            {
+                chapter.chapter_download_dir = Some(archive_path);
+                chapter.is_archived = true;
+            }
+            comic_mut
+                .save_comic_metadata()
+                .wrap_err("保存漫画元数据失败")?;
+        }
 
         Ok(())
     }

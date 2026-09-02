@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::{Path, PathBuf}};
 
 use eyre::{eyre, OptionExt, WrapErr};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,8 @@ pub struct ChapterInfo {
     pub is_pdf_exported: bool,
     /// 是否曾导出过 CBZ
     pub is_cbz_exported: bool,
+    /// 章节是否被打包成压缩包（章节下载目录已替换为单个压缩包文件）
+    pub is_archived: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_downloaded: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,6 +67,11 @@ impl ChapterInfo {
         )
     )]
     pub fn save_chapter_metadata(&self) -> eyre::Result<()> {
+        // 已归档章节的元数据保存在归档文件内部，不需要再写一次到外层
+        if self.is_archived {
+            return Ok(());
+        }
+
         let mut chapter_info = self.clone();
         // 将 is_downloaded 和 chapter_download_dir 字段设置为 None，
         // 这样能使这些字段在序列化时被忽略。
@@ -138,42 +145,32 @@ impl ChapterInfo {
         app: &AppHandle,
         fmt_params: &DirFmtParams,
     ) -> eyre::Result<PathBuf> {
-        use strfmt::strfmt;
-
-        let json_value =
-            serde_json::to_value(fmt_params).wrap_err("将DirFmtParams转为serde_json::Value失败")?;
-
-        let json_map = json_value
-            .as_object()
-            .ok_or_eyre("DirFmtParams不是JSON对象")?;
-
-        let vars: HashMap<String, String> = json_map
-            .iter()
-            .map(|(k, v)| {
-                let value = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => v.to_string(),
-                };
-                (k.clone(), value)
-            })
-            .collect();
-
-        let (download_dir, dir_fmt) = {
+        let (download_dir, dir_fmt, mode) = {
             let config = app.get_config();
             let config = config.read();
-            (config.download_dir.clone(), config.dir_fmt.clone())
+            (
+                config.download_dir.clone(),
+                config.dir_fmt.clone(),
+                config.chinese_normalization,
+            )
         };
+        let path = Self::build_chapter_download_path(&dir_fmt, &download_dir, fmt_params, mode)?;
+        Ok(path)
+    }
 
-        let dir_fmt_parts: Vec<&str> = dir_fmt.split('/').collect();
-
-        let mut dir_names = Vec::new();
-        for fmt in dir_fmt_parts {
-            let dir_name = strfmt(fmt, &vars).wrap_err("格式化目录名失败")?;
-            let dir_name = utils::filename_filter(&dir_name);
-            if !dir_name.is_empty() {
-                dir_names.push(dir_name);
-            }
-        }
+    /// 给定 dir_fmt 模板、下载根目录与章节参数，返回完整的章节下载路径。
+    ///
+    /// 这是 `get_chapter_download_dir_by_fmt` 的纯函数版本，方便在没有
+    /// `AppHandle` 的场景下复用同一套目录命名规则——例如
+    /// `update_chapter_infos_fields` 在扫归档时反向推预期目录名，再去匹配
+    /// zip 文件名。
+    pub fn build_chapter_download_path(
+        dir_fmt: &str,
+        download_dir: &Path,
+        fmt_params: &DirFmtParams,
+        mode: crate::config::ChineseNormalization,
+    ) -> eyre::Result<PathBuf> {
+        let dir_names = compute_dir_names_from_fmt(dir_fmt, fmt_params, mode)?;
 
         if dir_names.len() < 2 {
             let err_msg =
@@ -181,12 +178,31 @@ impl ChapterInfo {
             return Err(eyre!(err_msg));
         }
 
-        let mut chapter_download_dir = download_dir;
+        let mut chapter_download_dir = download_dir.to_path_buf();
         for dir_name in dir_names {
             chapter_download_dir = chapter_download_dir.join(dir_name);
         }
-
         Ok(chapter_download_dir)
+    }
+
+    /// 给定 dir_fmt 模板与章节参数，只计算最后一段（章节目录名）。
+    ///
+    /// 用于 `update_chapter_infos_fields` 把 zip 文件名回退到章节：
+    /// 对每个 chapter_info 用当前 dir_fmt 渲出预期章节目录名，再去和 zip
+    /// 文件名（去掉扩展名与可选的 `__<chapter_id>` 后缀后）做精确字符串匹配。
+    /// 不依赖任何固定模式，所以无论用户怎么自定义 dir_fmt 都能匹配上。
+    pub fn compute_chapter_dir_name(
+        dir_fmt: &str,
+        fmt_params: &DirFmtParams,
+        mode: crate::config::ChineseNormalization,
+    ) -> eyre::Result<String> {
+        let dir_names = compute_dir_names_from_fmt(dir_fmt, fmt_params, mode)?;
+        // dir_fmt 至少两级（最后一级才是章节目录），但若用户配置只有一级，
+        // 我们就退而求其次用最后那段——下面的主流程会再校验层级。
+        Ok(dir_names
+            .last()
+            .cloned()
+            .ok_or_else(|| eyre!("dir_fmt 没有产生任何目录名"))?)
     }
 
     #[instrument(
@@ -216,6 +232,53 @@ impl ChapterInfo {
         let temp_download_dir = parent.join(format!(".下载中-{chapter_download_dir_name}"));
         Ok(temp_download_dir)
     }
+}
+
+
+/// 把 dir_fmt 模板（`a/b/c` 这种用 `/` 分隔的多级目录模板）按 fmt_params 渲染，
+/// 每一段都过一遍 filename_filter，返回非空的目录名列表。
+///
+/// 与原 `get_chapter_download_dir_by_fmt` 中那段循环逻辑等价，单独抽出来便于
+/// `update_chapter_infos_fields` 在没有 AppHandle 的情况下复用。
+fn compute_dir_names_from_fmt(
+    dir_fmt: &str,
+    fmt_params: &DirFmtParams,
+    mode: crate::config::ChineseNormalization,
+) -> eyre::Result<Vec<String>> {
+    use strfmt::strfmt;
+
+    let json_value =
+        serde_json::to_value(fmt_params).wrap_err("将DirFmtParams转为serde_json::Value失败")?;
+
+    let json_map = json_value
+        .as_object()
+        .ok_or_eyre("DirFmtParams不是JSON对象")?;
+
+    let vars: HashMap<String, String> = json_map
+        .iter()
+        .map(|(k, v)| {
+            let value = match v {
+                serde_json::Value::String(s) => s.clone(),
+                _ => v.to_string(),
+            };
+            (k.clone(), value)
+        })
+        .collect();
+
+    let dir_fmt_parts: Vec<&str> = dir_fmt.split('/').collect();
+    let mut dir_names = Vec::new();
+    for fmt in dir_fmt_parts {
+        let dir_name = strfmt(fmt, &vars).wrap_err("格式化目录名失败")?;
+        // 在写到磁盘之前做一次简繁中文归一化，避免同一本漫画因登录语言
+        // 不一致（简中/繁中/日文等）被生成两个不同目录。OpenCC 按字符级
+        // 处理，Hangul（韩文）、日文假名、英文、数字、标点都不会被连带改写。
+        let dir_name = crate::text::normalize(&dir_name, mode);
+        let dir_name = utils::filename_filter(&dir_name);
+        if !dir_name.is_empty() {
+            dir_names.push(dir_name);
+        }
+    }
+    Ok(dir_names)
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize, Type)]

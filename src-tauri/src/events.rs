@@ -45,8 +45,16 @@ pub enum DownloadAllFavoritesEvent {
     #[serde(rename_all = "camelCase")]
     GetFavoritesStart,
 
+    /// 收藏夹全部拉到本地之后，进入「逐本处理」阶段。
+    ///
+    /// `current_comic_title` 是当前正在拉取/处理的那一本的标题，方便前端在 overview
+    /// 卡片里直接展示「当前: 《xxx》」。`comic_id` 可能在拉取/解析阶段就失败了，所以是可选的。
     #[serde(rename_all = "camelCase")]
-    GetComicsProgress { current: i64, total: i64 },
+    GetComicsProgress {
+        current: i64,
+        total: i64,
+        current_comic_title: String,
+    },
 
     #[serde(rename_all = "camelCase")]
     StartCreateDownloadTasks {
@@ -62,6 +70,16 @@ pub enum DownloadAllFavoritesEvent {
     #[serde(rename_all = "camelCase")]
     EndCreateDownloadTasks { comic_id: i64 },
 
+    /// 一本漫画在拉取或解析阶段失败，已被跳过。
+    ///
+    /// 区别于 `EndCreateDownloadTasks`：本事件代表「整本没处理成」，所以前端 overview
+    /// 卡片要把这一本计入失败计数而不是已完成计数。
+    #[serde(rename_all = "camelCase")]
+    FailedComic {
+        comic_id: Option<i64>,
+        comic_title: String,
+    },
+
     #[serde(rename_all = "camelCase")]
     GetComicsEnd,
 }
@@ -72,8 +90,14 @@ pub enum UpdateDownloadedComicsEvent {
     #[serde(rename_all = "camelCase")]
     GetComicStart { total: i64 },
 
+    /// 与 `DownloadAllFavoritesEvent::GetComicsProgress` 同义：
+    /// `current_comic_title` 是当前正在处理的那本已下载漫画的标题。
     #[serde(rename_all = "camelCase")]
-    GetComicProgress { current: i64, total: i64 },
+    GetComicProgress {
+        current: i64,
+        total: i64,
+        current_comic_title: String,
+    },
 
     #[serde(rename_all = "camelCase")]
     CreateDownloadTasksStart {
@@ -88,6 +112,13 @@ pub enum UpdateDownloadedComicsEvent {
 
     #[serde(rename_all = "camelCase")]
     CreateDownloadTasksEnd { comic_id: i64 },
+
+    /// 一本已下载漫画在拉取阶段失败，已被跳过。
+    #[serde(rename_all = "camelCase")]
+    FailedComic {
+        comic_id: i64,
+        comic_title: String,
+    },
 
     #[serde(rename_all = "camelCase")]
     GetComicEnd,

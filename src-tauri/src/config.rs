@@ -37,6 +37,19 @@ pub struct Config {
     pub enable_merge_pdf: bool,
     /// 导出跳过模式
     pub export_skip_mode: ExportSkipMode,
+    /// 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
+    pub chapter_archive_format: ChapterArchiveFormat,
+    /// 章节下载缺失图片容忍阈值：当缺失图片数 ≤ 此值时，视为下载成功并降级为告警，
+    /// 不会让整章作废。设为 `0` 则保留原行为（只要缺一张就整章失败）。
+    pub missing_image_threshold: u32,
+    /// 简繁中文归一化：用于消除同一本漫画在不同登录语言下因简繁差异开新目录的问题。
+    /// 日文、韩文、英文等其他脚本不会被 OpenCC 错误连带转换。
+    pub chinese_normalization: ChineseNormalization,
+    /// 是否禁用 ERROR 级日志的 GUI 弹窗通知。
+    ///
+    /// 启用后，下载/同步等过程中产生的失败不再右下角弹通知，但仍会写入实时日志
+    /// 与文件日志，方便事后排查。
+    pub disable_error_notifications: bool,
 }
 
 impl Config {
@@ -129,8 +142,27 @@ impl Config {
             create_pdf_concurrency: cpu_core_num,
             enable_merge_pdf: true,
             export_skip_mode: ExportSkipMode::default(),
+            chapter_archive_format: ChapterArchiveFormat::default(),
+            // 默认允许最多 5 张图片缺失（兼容长章节偶发的瞬时失败）
+            missing_image_threshold: 5,
+            // 默认把繁中转为简中，避免同一本漫画在不同登录语言下生成不同目录
+            chinese_normalization: ChineseNormalization::ToSimplified,
+            // 默认仍然弹 ERROR 通知；不喜欢打扰的用户可手动关闭
+            disable_error_notifications: false,
         }
     }
+}
+
+/// 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
+#[derive(Default, Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub enum ChapterArchiveFormat {
+    /// 不打包，保留原样
+    #[default]
+    None,
+    /// 打包为 .zip
+    Zip,
+    /// 打包为 .cbz
+    Cbz,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -142,6 +174,22 @@ pub enum ApiDomainMode {
     Domain4,
     Domain5,
     Custom,
+}
+
+/// 中文简繁归一化模式：用于把漫画名/作者名/章节名落地到磁盘前做一次简繁转换，
+/// 解决同一本漫画因登录语言不同（简中/繁中/日文等）被落到不同目录的问题。
+///
+/// 选择 None 时不做任何转换；选择 ToSimplified / ToTraditional 时调用 OpenCC
+/// 按字符级转换，Hangul（韩文）和日文假名会被自动跳过不会被连带改写。
+#[derive(Default, Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub enum ChineseNormalization {
+    /// 不做任何转换
+    None,
+    /// 繁体 → 简体（默认；适合大多数大陆用户）
+    #[default]
+    ToSimplified,
+    /// 简体 → 繁体
+    ToTraditional,
 }
 
 /// 导出跳过模式

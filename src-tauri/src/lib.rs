@@ -13,7 +13,9 @@ use crate::downloader::download_manager::DownloadManager;
 use crate::errors::install_custom_eyre_handler;
 use crate::export::ComicExportLock;
 use crate::jm_client::JmClient;
+use crate::utils::DownloadedComicsIndex;
 
+mod archive;
 mod commands;
 mod config;
 mod downloader;
@@ -24,6 +26,7 @@ mod extensions;
 mod jm_client;
 mod logger;
 mod responses;
+mod text;
 mod types;
 mod utils;
 
@@ -118,6 +121,9 @@ pub fn run() {
 
             let export_lock = ComicExportLock::new();
             app.manage(export_lock);
+
+            let downloaded_comics_index = DownloadedComicsIndex::new();
+            app.manage(downloaded_comics_index);
 
             logger::init(app.handle())?;
 

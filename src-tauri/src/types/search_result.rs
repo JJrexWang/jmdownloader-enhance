@@ -10,7 +10,7 @@ use crate::{
     responses::{
         CategoryRespData, CategorySubRespData, ComicInSearchRespData, SearchResp, SearchRespData,
     },
-    utils,
+    extensions::AppHandleExt,
 };
 
 use super::Comic;
@@ -55,7 +55,7 @@ impl SearchResult {
         app: &AppHandle,
         search_resp_data: SearchRespData,
     ) -> eyre::Result<SearchResult> {
-        let id_to_dir_map = utils::create_id_to_dir_map(app)?;
+        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
 
         let content = search_resp_data
             .content

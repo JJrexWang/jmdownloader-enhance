@@ -134,6 +134,7 @@ impl DownloadImgTask {
                 let err_title = "下载图片失败";
                 let message = err.to_message();
                 tracing::error!(err_title, message);
+                self.download_task.failed_indexes.lock().push(self.index);
                 return;
             }
         };
@@ -159,6 +160,7 @@ impl DownloadImgTask {
             let err_title = "保存图片失败";
             let message = err.to_message();
             tracing::error!(err_title, message);
+            self.download_task.failed_indexes.lock().push(self.index);
             return;
         }
 
