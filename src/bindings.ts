@@ -301,7 +301,11 @@ missingImageThreshold: number;
  * 简繁中文归一化：用于消除同一本漫画在不同登录语言下因简繁差异开新目录的问题。
  * 日文、韩文、英文等其他脚本不会被 OpenCC 错误连带转换。
  */
-chineseNormalization: ChineseNormalization }
+chineseNormalization: ChineseNormalization; 
+/**
+ * 是否禁用 ERROR 级日志的 GUI 弹窗通知。启用后失败仍会写入实时日志与文件日志。
+ */
+disableErrorNotifications: boolean }
 export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
 export type ChineseNormalization = "None" | "ToSimplified" | "ToTraditional"
 export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"

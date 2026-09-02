@@ -45,6 +45,11 @@ pub struct Config {
     /// 简繁中文归一化：用于消除同一本漫画在不同登录语言下因简繁差异开新目录的问题。
     /// 日文、韩文、英文等其他脚本不会被 OpenCC 错误连带转换。
     pub chinese_normalization: ChineseNormalization,
+    /// 是否禁用 ERROR 级日志的 GUI 弹窗通知。
+    ///
+    /// 启用后，下载/同步等过程中产生的失败不再右下角弹通知，但仍会写入实时日志
+    /// 与文件日志，方便事后排查。
+    pub disable_error_notifications: bool,
 }
 
 impl Config {
@@ -142,6 +147,8 @@ impl Config {
             missing_image_threshold: 5,
             // 默认把繁中转为简中，避免同一本漫画在不同登录语言下生成不同目录
             chinese_normalization: ChineseNormalization::ToSimplified,
+            // 默认仍然弹 ERROR 通知；不喜欢打扰的用户可手动关闭
+            disable_error_notifications: false,
         }
     }
 }

@@ -197,5 +197,20 @@ watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], 
 
     <span class="font-bold mt-2">其他</span>
     <n-checkbox class="w-fit" v-model:checked="store.config.shouldDownloadCover">下载封面</n-checkbox>
+    <div class="flex items-center gap-2 mt-2">
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-checkbox v-model:checked="store.config.disableErrorNotifications">
+            关闭错误通知弹窗
+          </n-checkbox>
+        </template>
+        <div>
+          启用后，下载、同步等过程中的失败不再以右下角弹窗的形式打扰你，但仍会写入实时日志与文件日志。
+        </div>
+        <div class="text-gray-500 mt-1">
+          适合下载任务多、网络偶尔抽风导致频繁失败的场景；事后可以从日志或日志对话框里排查。
+        </div>
+      </n-tooltip>
+    </div>
   </div>
 </template>
