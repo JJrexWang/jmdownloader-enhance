@@ -469,6 +469,11 @@ impl Comic {
 
 /// 从章节归档（.zip / .cbz）中读取 `章节元数据.json` 的 `chapterId` 字段。
 /// 失败时返回错误，调用方应当记日志并跳过该归档（不视为致命错误）。
+///
+/// 归档内的目录结构取决于打包方式：当前 pack_dir_as_archive 会把所有文件以
+/// `<chapter_dir_name>/<filename>` 形式存放，因此 `章节元数据.json` 通常位于
+/// 归档的第一级子目录下下。这里用 `zip::ZipArchive::file_names` 找到以
+/// `章节元数据.json` 结尾的条目，再按名称打开，确保对打包路径变化保持兼容。
 fn read_chapter_id_from_archive(archive_path: &Path) -> eyre::Result<i64> {
     use std::io::Read;
 
@@ -477,15 +482,28 @@ fn read_chapter_id_from_archive(archive_path: &Path) -> eyre::Result<i64> {
     let mut archive = zip::ZipArchive::new(file)
         .wrap_err(format!("`{}`不是有效的 zip 归档", archive_path.display()))?;
 
+    let metadata_entry_name = archive
+        .file_names()
+        .find(|name| name.ends_with("章节元数据.json"))
+        .ok_or_else(|| {
+            eyre::eyre!("`{}`中没有以`章节元数据.json`结尾的条目", archive_path.display())
+        })?
+        .to_string();
+
     let mut metadata_file = archive
-        .by_name("章节元数据.json")
-        .wrap_err(format!("`{}`中没有`章节元数据.json`", archive_path.display()))?;
+        .by_name(&metadata_entry_name)
+        .wrap_err(format!(
+            "`{}`中的`{}`无法打开",
+            archive_path.display(),
+            metadata_entry_name
+        ))?;
     let mut metadata_str = String::new();
     metadata_file
         .read_to_string(&mut metadata_str)
         .wrap_err(format!(
-            "读取`{}`中的`章节元数据.json`失败",
-            archive_path.display()
+            "读取`{}`中的`{}`失败",
+            archive_path.display(),
+            metadata_entry_name
         ))?;
 
     let chapter_json: serde_json::Value = serde_json::from_str(&metadata_str)
