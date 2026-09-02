@@ -755,7 +755,7 @@ pub fn get_logs_dir_size(app: AppHandle) -> CommandResult<u64> {
 #[specta::specta]
 #[instrument(level = "error", skip_all, fields(comic_id = comic.id, comic_title = comic.name))]
 pub fn get_synced_comic(app: AppHandle, mut comic: Comic) -> CommandResult<Comic> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步Comic字段失败", err))?;
 
     comic
@@ -773,7 +773,7 @@ pub fn get_synced_comic_in_favorite(
     app: AppHandle,
     mut comic: ComicInFavorite,
 ) -> CommandResult<ComicInFavorite> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步ComicInFavorite字段失败", err))?;
 
     comic.update_fields(&id_to_dir_map);
@@ -789,7 +789,7 @@ pub fn get_synced_comic_in_search(
     app: AppHandle,
     mut comic: ComicInSearch,
 ) -> CommandResult<ComicInSearch> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步ComicInSearch字段失败", err))?;
 
     comic.update_fields(&id_to_dir_map);
@@ -805,7 +805,7 @@ pub fn get_synced_comic_in_weekly(
     app: AppHandle,
     mut comic: ComicInWeekly,
 ) -> CommandResult<ComicInWeekly> {
-    let id_to_dir_map = utils::create_id_to_dir_map(&app)
+    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步ComicInWeekly字段失败", err))?;
 
     comic.update_fields(&id_to_dir_map);

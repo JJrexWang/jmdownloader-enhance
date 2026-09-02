@@ -3,7 +3,7 @@ use tauri::{Manager, State};
 
 use crate::{
     config::Config, downloader::download_manager::DownloadManager, export::ComicExportLock,
-    jm_client::JmClient,
+    jm_client::JmClient, utils::DownloadedComicsIndex,
 };
 
 pub trait EyreReportToMessage {
@@ -73,6 +73,7 @@ pub trait AppHandleExt {
     fn get_jm_client(&self) -> State<'_, JmClient>;
     fn get_download_manager(&self) -> State<'_, DownloadManager>;
     fn get_export_lock(&self) -> State<'_, ComicExportLock>;
+    fn get_downloaded_comics_index(&self) -> State<'_, DownloadedComicsIndex>;
 }
 
 impl AppHandleExt for tauri::AppHandle {
@@ -87,5 +88,8 @@ impl AppHandleExt for tauri::AppHandle {
     }
     fn get_export_lock(&self) -> State<'_, ComicExportLock> {
         self.state::<ComicExportLock>()
+    }
+    fn get_downloaded_comics_index(&self) -> State<'_, DownloadedComicsIndex> {
+        self.state::<DownloadedComicsIndex>()
     }
 }

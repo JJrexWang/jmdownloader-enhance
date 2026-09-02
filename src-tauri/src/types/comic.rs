@@ -13,7 +13,6 @@ use walkdir::WalkDir;
 use crate::{
     extensions::{AppHandleExt, WalkDirEntryExt},
     responses::{GetComicRespData, RelatedListRespData},
-    utils,
 };
 
 use super::{ChapterInfo, DirFmtParams};
@@ -118,7 +117,7 @@ impl Comic {
             comic_download_dir: None,
         };
 
-        let id_to_dir_map = utils::create_id_to_dir_map(app)?;
+        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
 
         // TODO: 这是为了兼容v0.15.4及之前的版本，后续需要移除，计划在v0.17.0之后移除
         if let Some(comic_download_dir) = id_to_dir_map.get(&comic.id) {

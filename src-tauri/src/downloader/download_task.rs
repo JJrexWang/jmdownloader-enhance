@@ -219,6 +219,9 @@ impl DownloadTask {
             tracing::error!(err_title, message);
         }
 
+        // 章节落盘后失效已下载索引缓存，下次读取时重建
+        self.app.get_downloaded_comics_index().invalidate();
+
         self.sleep_between_chapter().await;
         tracing::info!("章节下载成功");
 
