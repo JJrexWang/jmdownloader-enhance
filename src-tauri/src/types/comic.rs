@@ -68,7 +68,7 @@ impl Comic {
         fields(comic_id = comic.id, comic_title = comic.name)
     )]
     pub fn from_comic_resp_data_with_map(
-        _app: &AppHandle,
+        app: &AppHandle,
         comic: GetComicRespData,
         id_to_dir_map: Arc<HashMap<i64, PathBuf>>,
     ) -> eyre::Result<Comic> {
@@ -81,7 +81,8 @@ impl Comic {
                 .wrap_err("为旧版本创建章节元数据失败")?;
         }
 
-        comic.update_fields(&id_to_dir_map)?;
+        let dir_fmt = app.get_config().read().dir_fmt.clone();
+        comic.update_fields(&id_to_dir_map, &dir_fmt)?;
 
         Ok(comic)
     }
@@ -153,12 +154,16 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]
-    pub fn update_fields(&mut self, id_to_dir_map: &HashMap<i64, PathBuf>) -> eyre::Result<()> {
+    pub fn update_fields(
+        &mut self,
+        id_to_dir_map: &HashMap<i64, PathBuf>,
+        dir_fmt: &str,
+    ) -> eyre::Result<()> {
         if let Some(comic_download_dir) = id_to_dir_map.get(&self.id) {
             self.comic_download_dir = Some(comic_download_dir.clone());
             self.is_downloaded = Some(true);
 
-            self.update_chapter_infos_fields()
+            self.update_chapter_infos_fields(dir_fmt)
                 .wrap_err("更新章节信息字段失败")?;
         }
 
@@ -166,7 +171,7 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(metadata_path = %metadata_path.display()))]
-    pub fn from_metadata(metadata_path: &Path) -> eyre::Result<Comic> {
+    pub fn from_metadata(metadata_path: &Path, dir_fmt: &str) -> eyre::Result<Comic> {
         let comic_json = std::fs::read_to_string(metadata_path)?;
         let mut comic = serde_json::from_str::<Comic>(&comic_json)
             .wrap_err("将元数据文件反序列化为Comic失败")?;
@@ -184,7 +189,7 @@ impl Comic {
         comic.comic_download_dir = Some(comic_download_dir);
         comic.is_downloaded = Some(true);
 
-        comic.update_chapter_infos_fields()?;
+        comic.update_chapter_infos_fields(dir_fmt)?;
 
         Ok(comic)
     }
@@ -344,7 +349,7 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]
-    fn update_chapter_infos_fields(&mut self) -> eyre::Result<()> {
+    fn update_chapter_infos_fields(&mut self, dir_fmt: &str) -> eyre::Result<()> {
         let Some(comic_download_dir) = &self.comic_download_dir else {
             return Err(eyre!("`comic_download_dir`字段为`None`"));
         };
@@ -404,18 +409,16 @@ impl Comic {
             } else if entry.is_chapter_archive() {
                 // 已打包的章节：chapter_dir_name.zip / .cbz，章节元数据.json 位于压缩包内部。
                 // 优先尝试从压缩包内读取章节元数据；若压缩包内没有（例如早期版本打包时
-                // 没有把 章节元数据.json 写进 zip 的情况），则回退到「zip 文件名 = 章节目录名
-                // = 章节标题」的匹配。仅在默认 dir_fmt（{comic_title}/{chapter_title}）下
-                // 有效，命中后会以 warn 级别打日志提示用户以后再下载就会自动修复。
+                // 没有把 章节元数据.json 写进 zip 的情况），则用当前 dir_fmt 模板反向推算
+                // 每个章节的预期章节目录名，再与 zip 文件名（去除扩展名和可选的
+                // `__<chapter_id>` 后缀）做精确字符串匹配。该策略不依赖任何固定模式，
+                // 因此无论用户怎么自定义 dir_fmt 都能识别归档所属的章节。
                 let chapter_id = match read_chapter_id_from_archive(entry_path) {
                     Ok(id) => id,
-                    Err(inner_err) => match fallback_chapter_id_from_archive_name(
-                        entry_path,
-                        &self.chapter_infos,
-                    ) {
+                    Err(inner_err) => match self.match_chapter_id_from_archive_name(entry_path, dir_fmt) {
                         Some(id) => {
                             tracing::warn!(
-                                "从归档`{}`读取`chapterId`失败（{}），已按文件名回退匹配到 chapterId={}；后续下载会自动把 章节元数据.json 写入压缩包",
+                                "从归档`{}`读取`chapterId`失败（{}），已按 dir_fmt=`{dir_fmt}` 反推匹配到 chapterId={}；后续下载会自动把 章节元数据.json 写入压缩包",
                                 entry_path.display(),
                                 inner_err.to_message(),
                                 id,
@@ -483,6 +486,101 @@ impl Comic {
 
         Ok(())
     }
+
+    /// 当压缩包里没有 `章节元数据.json` 时，按 zip 文件名回退匹配章节。
+    ///
+    /// 用 `dir_fmt` 模板给 `self.chapter_infos` 里每个章节渲一次「预期章节目录名」
+    /// （即 dir_fmt 最后一段格式化后的结果），然后和 zip 文件名去除扩展名、可选的
+    /// `__<chapter_id>` 后缀后做精确字符串匹配。该方案不依赖任何固定模式，所以无论
+    /// 用户怎么自定义 dir_fmt（含 `{order} - ` 前缀、含自定义分隔符、含作者信息等）
+    /// 都能识别归档所属的章节。
+    ///
+    /// 文件名同时支持两种形态：
+    ///   - 新归档：`<chapter_dir_name>__<chapter_id>.zip` —— 先按 `__` 切分尾部解析
+    ///     chapter_id，并校验剩余 stem 与预期章节目录名相等。
+    ///   - 旧归档：`<chapter_dir_name>.zip` —— 直接比较 file_stem 与预期目录名。
+    ///
+    /// 全部失败返回 None，调用方按找不到 chapter_id 处理（warn 后跳过该归档）。
+    fn match_chapter_id_from_archive_name(
+        &self,
+        archive_path: &Path,
+        dir_fmt: &str,
+    ) -> Option<i64> {
+        let file_name = archive_path.file_name()?.to_str()?;
+        let stem = archive_path.file_stem()?.to_str()?;
+        if stem.is_empty() {
+            return None;
+        }
+
+        let author = self.author.join(", ");
+
+        // 形态 1：`<chapter_dir_name>__<chapter_id>.<ext>`
+        //         （新归档约定；直接解析尾部 id 并校验 stem）
+        if let Some(idx) = file_name.rfind("__") {
+            let after = &file_name[idx + 2..];
+            let id_part = after.split('.').next().unwrap_or("");
+            if let Ok(parsed_id) = id_part.parse::<i64>() {
+                let base_stem = &stem[..idx];
+                // 在 chapter_infos 里找 parsed_id 对应的章节，
+                // 同时校验其预期目录名 == base_stem（避免其他章节误中同名后缀）
+                if let Some(chapter) = self
+                    .chapter_infos
+                    .iter()
+                    .find(|c| c.chapter_id == parsed_id)
+                {
+                    let expected =
+                        match Self::expected_chapter_dir_name(dir_fmt, &author, self, chapter) {
+                            Ok(name) => name,
+                            Err(err) => {
+                                tracing::warn!(
+                                    "按 dir_fmt 渲染章节`{}`的目录名失败：{}",
+                                    chapter.chapter_id,
+                                    err.to_message()
+                                );
+                                return Some(parsed_id);
+                            }
+                        };
+                    if expected == base_stem {
+                        return Some(parsed_id);
+                    }
+                    // stem 不匹配，回退到整体 file_stem 继续尝试（形态 2）
+                }
+            }
+        }
+
+        // 形态 2：`<chapter_dir_name>.zip` 或已被剥掉 `__<id>` 的 base_stem
+        for chapter in &self.chapter_infos {
+            let expected = match Self::expected_chapter_dir_name(dir_fmt, &author, self, chapter)
+            {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+            if expected == stem {
+                return Some(chapter.chapter_id);
+            }
+        }
+
+        None
+    }
+
+    /// 用 dir_fmt 给定章节参数渲出「预期章节目录名」。失败时不 panic，仅记录日志后
+    /// 让上层继续后续匹配策略。
+    fn expected_chapter_dir_name(
+        dir_fmt: &str,
+        author: &str,
+        comic: &Comic,
+        chapter: &ChapterInfo,
+    ) -> eyre::Result<String> {
+        let params = DirFmtParams {
+            comic_id: comic.id,
+            comic_title: comic.name.clone(),
+            author: author.to_string(),
+            chapter_id: chapter.chapter_id,
+            chapter_title: chapter.chapter_title.clone(),
+            order: chapter.order,
+        };
+        ChapterInfo::compute_chapter_dir_name(dir_fmt, &params)
+    }
 }
 
 /// 从章节归档（.zip / .cbz）中读取 `章节元数据.json` 的 `chapterId` 字段。
@@ -539,81 +637,5 @@ fn read_chapter_id_from_archive(archive_path: &Path) -> eyre::Result<i64> {
         ))?;
 
     Ok(chapter_id)
-}
-
-/// 当压缩包里没有 `章节元数据.json` 时（例如早期版本打包流程未把元数据写进 zip），
-/// 按 zip 文件名回退匹配章节。识别策略按优先级尝试：
-///
-/// 1. **文件名后缀约定**：当前 `chapter_archive_path` 会把 chapter_id 以
-///    `<dir_name>__<chapter_id>.zip` 的形式追加在文件名末尾，这里直接尝试
-///    解析末尾的 `<i64>`。这是最稳妥的路径，不依赖 dir_fmt。
-/// 2. **默认 dir_fmt（`{comic_title}/{chapter_title}`）**：`file_stem` 直接等于
-///    `chapter_title`，整体相等即可匹配。
-/// 3. **`{order} - {chapter_title}` 风格**：用户的 dir_fmt
-///    `[{author}] {comic_title}({comic_id})/{order} - {chapter_title}` 实际上
-///    会把 `{order} - ` 前缀塞进章节目录名里（与 chapter_title 内的「第N话」重复），
-///    所以我们也要尝试 `format!("{order} - {chapter_title}")` 的整体匹配。
-/// 4. **末尾 `chapter_title` 子串**：宽松兜底，若 file_stem 以 chapter_title 结尾，
-///    且前缀是合理的「序号 + 分隔符」（如 `12_`、`12 - `、`12.` 等），且前缀能解析
-///    成对应 chapter 的 order，则视为匹配。
-///
-/// 全部失败时返回 None，调用方会按找不到 chapter_id 处理（warn 后跳过该归档）。
-fn fallback_chapter_id_from_archive_name(
-    archive_path: &Path,
-    chapter_infos: &[ChapterInfo],
-) -> Option<i64> {
-    let file_name = archive_path.file_name()?.to_str()?;
-    let stem = archive_path.file_stem()?.to_str()?;
-    if stem.is_empty() {
-        return None;
-    }
-
-    // 1) 优先尝试 `<...>__<chapter_id>.<ext>` 后缀约定。
-    //    file_name 例如 `88 - 第88话...__1234567.zip`，去掉扩展名后是
-    //    `88 - 第88话...__1234567`，按 `__` 切分最后一个段。
-    if let Some(last_dunder_idx) = file_name.rfind("__") {
-        let after_dunder = &file_name[last_dunder_idx + 2..];
-        // after_dunder 形如 `<id>.<ext>` 或只是 `<id>`（极端情况）
-        let id_part = after_dunder.split('.').next().unwrap_or("");
-        if let Ok(id) = id_part.parse::<i64>() {
-            if chapter_infos.iter().any(|c| c.chapter_id == id) {
-                return Some(id);
-            }
-        }
-    }
-
-    // 2) 默认 dir_fmt：`file_stem == chapter_title`
-    if let Some(c) = chapter_infos
-        .iter()
-        .find(|c| c.chapter_title == stem)
-    {
-        return Some(c.chapter_id);
-    }
-
-    // 3) `{order} - {chapter_title}` 风格
-    if let Some(c) = chapter_infos
-        .iter()
-        .find(|c| stem == format!("{} - {}", c.order, c.chapter_title))
-    {
-        return Some(c.chapter_id);
-    }
-
-    // 4) 宽松：file_stem 以 chapter_title 结尾，前缀提取出来能解析成 order
-    for chapter in chapter_infos {
-        if !stem.ends_with(&chapter.chapter_title) {
-            continue;
-        }
-        let prefix = &stem[..stem.len() - chapter.chapter_title.len()];
-        // 只保留数字，过滤所有分隔符（空格、`-`、`.`、`_` 等），避免分隔符打乱解析
-        let digits: String = prefix.chars().filter(|c| c.is_ascii_digit()).collect();
-        if let Ok(order) = digits.parse::<i64>() {
-            if order == chapter.order {
-                return Some(chapter.chapter_id);
-            }
-        }
-    }
-
-    let _ = stem;
-    None
 }
 

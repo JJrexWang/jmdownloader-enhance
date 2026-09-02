@@ -636,7 +636,9 @@ pub fn get_downloaded_comics(app: AppHandle) -> Vec<Comic> {
 
     let mut downloaded_comics = Vec::new();
     for (metadata_path, _) in metadata_path_with_modify_time {
-        match Comic::from_metadata(&metadata_path) {
+        // 用当前配置的 dir_fmt 渲染章节目录名，便于精确匹配 zip 文件名
+        let dir_fmt = app.get_config().read().dir_fmt.clone();
+        match Comic::from_metadata(&metadata_path, &dir_fmt) {
             Ok(comic) => downloaded_comics.push(comic),
             Err(err) => {
                 let err_title = "获取已下载漫画的过程中遇到错误，已跳过";
@@ -769,9 +771,10 @@ pub fn get_logs_dir_size(app: AppHandle) -> CommandResult<u64> {
 pub fn get_synced_comic(app: AppHandle, mut comic: Comic) -> CommandResult<Comic> {
     let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
         .map_err(|err| CommandError::from("同步Comic字段失败", err))?;
+    let dir_fmt = app.get_config().read().dir_fmt.clone();
 
     comic
-        .update_fields(&id_to_dir_map)
+        .update_fields(&id_to_dir_map, &dir_fmt)
         .map_err(|err| CommandError::from("同步Comic字段失败", err))?;
 
     Ok(comic)
