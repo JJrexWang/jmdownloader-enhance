@@ -3,7 +3,7 @@ use tauri::{Manager, State};
 
 use crate::{
     config::Config, downloader::download_manager::DownloadManager, export::ComicExportLock,
-    jm_client::JmClient,
+    jm_client::JmClient, utils::DownloadedComicsIndex,
 };
 
 pub trait EyreReportToMessage {
@@ -43,6 +43,7 @@ impl PathIsImg for std::path::Path {
 pub trait WalkDirEntryExt {
     fn is_comic_metadata(&self) -> bool;
     fn is_chapter_metadata(&self) -> bool;
+    fn is_chapter_archive(&self) -> bool;
 }
 impl WalkDirEntryExt for walkdir::DirEntry {
     fn is_comic_metadata(&self) -> bool {
@@ -66,6 +67,17 @@ impl WalkDirEntryExt for walkdir::DirEntry {
 
         true
     }
+
+    fn is_chapter_archive(&self) -> bool {
+        if !self.file_type().is_file() {
+            return false;
+        }
+        let Some(ext) = self.path().extension().and_then(|s| s.to_str()) else {
+            return false;
+        };
+        // 忽略大小写匹配 .zip / .cbz
+        matches!(ext.to_ascii_lowercase().as_str(), "zip" | "cbz")
+    }
 }
 
 pub trait AppHandleExt {
@@ -73,6 +85,7 @@ pub trait AppHandleExt {
     fn get_jm_client(&self) -> State<'_, JmClient>;
     fn get_download_manager(&self) -> State<'_, DownloadManager>;
     fn get_export_lock(&self) -> State<'_, ComicExportLock>;
+    fn get_downloaded_comics_index(&self) -> State<'_, DownloadedComicsIndex>;
 }
 
 impl AppHandleExt for tauri::AppHandle {
@@ -87,5 +100,8 @@ impl AppHandleExt for tauri::AppHandle {
     }
     fn get_export_lock(&self) -> State<'_, ComicExportLock> {
         self.state::<ComicExportLock>()
+    }
+    fn get_downloaded_comics_index(&self) -> State<'_, DownloadedComicsIndex> {
+        self.state::<DownloadedComicsIndex>()
     }
 }

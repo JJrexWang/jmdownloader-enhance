@@ -20,7 +20,7 @@ use crate::{
     config::ExportSkipMode,
     events::ExportPdfEvent,
     export::{
-        get_downloaded_chapters, get_downloaded_chapters_by_ids, get_image_paths,
+        get_downloaded_chapters, get_downloaded_chapters_by_ids, get_image_paths_with_archive_support,
         ComicExportLockGuard, ExportFormat,
     },
     extensions::AppHandleExt,
@@ -226,12 +226,23 @@ fn pdf_internal(
                 return Ok(());
             }
 
-            let image_paths = get_image_paths(chapter_download_dir, true).wrap_err(format!(
+            let (image_paths, temp_to_cleanup) = get_image_paths_with_archive_support(
+                chapter_download_dir,
+                true,
+            )
+            .wrap_err(format!(
                 "获取`{}`中的图片失败",
                 chapter_download_dir.display()
             ))?;
 
-            create_pdf(image_paths, &pdf_path).wrap_err("创建pdf失败")?;
+            let create_result = create_pdf(image_paths, &pdf_path).wrap_err("创建pdf失败");
+
+            // 如果是归档章节，解压到了临时目录，需要在使用完后清理
+            if let Some(temp_dir) = temp_to_cleanup {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+            }
+
+            create_result?;
 
             // 更新章节导出状态
             chapter_info.is_pdf_exported = true;

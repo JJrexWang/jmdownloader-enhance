@@ -37,6 +37,8 @@ pub struct Config {
     pub enable_merge_pdf: bool,
     /// 导出跳过模式
     pub export_skip_mode: ExportSkipMode,
+    /// 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
+    pub chapter_archive_format: ChapterArchiveFormat,
 }
 
 impl Config {
@@ -129,8 +131,21 @@ impl Config {
             create_pdf_concurrency: cpu_core_num,
             enable_merge_pdf: true,
             export_skip_mode: ExportSkipMode::default(),
+            chapter_archive_format: ChapterArchiveFormat::default(),
         }
     }
+}
+
+/// 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
+#[derive(Default, Debug, Copy, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub enum ChapterArchiveFormat {
+    /// 不打包，保留原样
+    #[default]
+    None,
+    /// 打包为 .zip
+    Zip,
+    /// 打包为 .cbz
+    Cbz,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use eyre::{eyre, OptionExt, WrapErr};
@@ -11,9 +12,8 @@ use tracing::instrument;
 use walkdir::WalkDir;
 
 use crate::{
-    extensions::{AppHandleExt, WalkDirEntryExt},
+    extensions::{AppHandleExt, EyreReportToMessage, WalkDirEntryExt},
     responses::{GetComicRespData, RelatedListRespData},
-    utils,
 };
 
 use super::{ChapterInfo, DirFmtParams};
@@ -58,6 +58,37 @@ impl Comic {
         fields(comic_id = comic.id, comic_title = comic.name)
     )]
     pub fn from_comic_resp_data(app: &AppHandle, comic: GetComicRespData) -> eyre::Result<Comic> {
+        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
+        Self::from_comic_resp_data_with_map(app, comic, id_to_dir_map)
+    }
+
+    #[instrument(
+        level = "error",
+        skip_all,
+        fields(comic_id = comic.id, comic_title = comic.name)
+    )]
+    pub fn from_comic_resp_data_with_map(
+        _app: &AppHandle,
+        comic: GetComicRespData,
+        id_to_dir_map: Arc<HashMap<i64, PathBuf>>,
+    ) -> eyre::Result<Comic> {
+        let mut comic = Self::build_from_resp_data(comic);
+
+        // TODO: 这是为了兼容v0.15.4及之前的版本，后续需要移除，计划在v0.17.0之后移除
+        if let Some(comic_download_dir) = id_to_dir_map.get(&comic.id) {
+            comic
+                .create_chapter_metadata_for_old_version(comic_download_dir)
+                .wrap_err("为旧版本创建章节元数据失败")?;
+        }
+
+        comic.update_fields(&id_to_dir_map)?;
+
+        Ok(comic)
+    }
+
+    /// 从 `GetComicRespData` 构建 `Comic` 结构体（不含下载状态相关的字段填充），
+    /// `from_comic_resp_data` 与 `from_comic_resp_data_with_map` 共用此实现。
+    fn build_from_resp_data(comic: GetComicRespData) -> Comic {
         let mut chapter_infos: Vec<ChapterInfo> = comic
             .series
             .into_iter()
@@ -77,6 +108,7 @@ impl Comic {
                     order,
                     is_pdf_exported: false,
                     is_cbz_exported: false,
+                    is_archived: false,
                     is_downloaded: None,
                     chapter_download_dir: None,
                 };
@@ -91,12 +123,13 @@ impl Comic {
                 order: 1,
                 is_pdf_exported: false,
                 is_cbz_exported: false,
+                is_archived: false,
                 is_downloaded: None,
                 chapter_download_dir: None,
             });
         }
 
-        let mut comic = Comic {
+        Comic {
             id: comic.id,
             name: comic.name,
             addtime: comic.addtime,
@@ -116,20 +149,7 @@ impl Comic {
             is_aids: comic.is_aids,
             is_downloaded: None,
             comic_download_dir: None,
-        };
-
-        let id_to_dir_map = utils::create_id_to_dir_map(app)?;
-
-        // TODO: 这是为了兼容v0.15.4及之前的版本，后续需要移除，计划在v0.17.0之后移除
-        if let Some(comic_download_dir) = id_to_dir_map.get(&comic.id) {
-            comic
-                .create_chapter_metadata_for_old_version(comic_download_dir)
-                .wrap_err("为旧版本创建章节元数据失败")?;
         }
-
-        comic.update_fields(&id_to_dir_map)?;
-
-        Ok(comic)
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]
@@ -334,47 +354,81 @@ impl Comic {
         }
 
         for entry in WalkDir::new(comic_download_dir)
+            .min_depth(1)
+            .max_depth(1)
             .into_iter()
             .filter_map(Result::ok)
         {
-            if !entry.is_chapter_metadata() {
-                continue;
-            }
+            let entry_path = entry.path();
 
-            let metadata_path = entry.path();
+            if entry.is_chapter_metadata() {
+                // 标准章节目录：chapter_dir/章节元数据.json + 图片
+                let metadata_str = std::fs::read_to_string(entry_path)
+                    .wrap_err(format!("读取`{}`失败", entry_path.display()))?;
 
-            let metadata_str = std::fs::read_to_string(metadata_path)
-                .wrap_err(format!("读取`{}`失败", metadata_path.display()))?;
+                let chapter_json: serde_json::Value = serde_json::from_str(&metadata_str)
+                    .wrap_err(format!(
+                        "将`{}`反序列化为serde_json::Value失败",
+                        entry_path.display()
+                    ))?;
 
-            let chapter_json: serde_json::Value =
-                serde_json::from_str(&metadata_str).wrap_err(format!(
-                    "将`{}`反序列化为serde_json::Value失败",
-                    metadata_path.display()
-                ))?;
+                let chapter_id = chapter_json
+                    .get("chapterId")
+                    .and_then(serde_json::Value::as_i64)
+                    .ok_or_eyre(format!(
+                        "`{}`没有`chapterId`字段",
+                        entry_path.display()
+                    ))?;
 
-            let chapter_id = chapter_json
-                .get("chapterId")
-                .and_then(serde_json::Value::as_i64)
-                .ok_or_eyre(format!("`{}`没有`chapterId`字段", metadata_path.display()))?;
+                if let Some(chapter_info) = self
+                    .chapter_infos
+                    .iter_mut()
+                    .find(|chapter| chapter.chapter_id == chapter_id)
+                {
+                    let parent = entry_path.parent().ok_or_eyre(format!(
+                        "`{}`没有父目录",
+                        entry_path.display()
+                    ))?;
+                    chapter_info.chapter_download_dir = Some(parent.to_path_buf());
+                    chapter_info.is_downloaded = Some(true);
+                    chapter_info.is_archived = false;
+                    chapter_info.is_pdf_exported = chapter_json
+                        .get("isPdfExported")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false);
+                    chapter_info.is_cbz_exported = chapter_json
+                        .get("isCbzExported")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false);
+                }
+            } else if entry.is_chapter_archive() {
+                // 已打包的章节：chapter_dir_name.zip / .cbz，章节元数据.json 位于压缩包内部
+                let chapter_id = match read_chapter_id_from_archive(entry_path) {
+                    Ok(id) => id,
+                    Err(err) => {
+                        let err_title = format!(
+                            "从归档`{}`读取`chapterId`失败",
+                            entry_path.display()
+                        );
+                        let message = err.to_message();
+                        tracing::warn!(err_title, message);
+                        continue;
+                    }
+                };
 
-            if let Some(chapter_info) = self
-                .chapter_infos
-                .iter_mut()
-                .find(|chapter| chapter.chapter_id == chapter_id)
-            {
-                let parent = metadata_path
-                    .parent()
-                    .ok_or_eyre(format!("`{}`没有父目录", metadata_path.display()))?;
-                chapter_info.chapter_download_dir = Some(parent.to_path_buf());
-                chapter_info.is_downloaded = Some(true);
-                chapter_info.is_pdf_exported = chapter_json
-                    .get("isPdfExported")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false);
-                chapter_info.is_cbz_exported = chapter_json
-                    .get("isCbzExported")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false);
+                if let Some(chapter_info) = self
+                    .chapter_infos
+                    .iter_mut()
+                    .find(|chapter| chapter.chapter_id == chapter_id)
+                {
+                    chapter_info.chapter_download_dir = Some(entry_path.to_path_buf());
+                    chapter_info.is_downloaded = Some(true);
+                    chapter_info.is_archived = true;
+                    // 已归档章节的导出状态需要打开压缩包读取，暂不支持，默认为 false
+                    // TODO: 后续把 is_pdf_exported / is_cbz_exported 挪到漫画级元数据中即可避免开包
+                    chapter_info.is_pdf_exported = false;
+                    chapter_info.is_cbz_exported = false;
+                }
             }
         }
         Ok(())
@@ -411,4 +465,42 @@ impl Comic {
 
         Ok(())
     }
+}
+
+/// 从章节归档（.zip / .cbz）中读取 `章节元数据.json` 的 `chapterId` 字段。
+/// 失败时返回错误，调用方应当记日志并跳过该归档（不视为致命错误）。
+fn read_chapter_id_from_archive(archive_path: &Path) -> eyre::Result<i64> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(archive_path)
+        .wrap_err(format!("打开`{}`失败", archive_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .wrap_err(format!("`{}`不是有效的 zip 归档", archive_path.display()))?;
+
+    let mut metadata_file = archive
+        .by_name("章节元数据.json")
+        .wrap_err(format!("`{}`中没有`章节元数据.json`", archive_path.display()))?;
+    let mut metadata_str = String::new();
+    metadata_file
+        .read_to_string(&mut metadata_str)
+        .wrap_err(format!(
+            "读取`{}`中的`章节元数据.json`失败",
+            archive_path.display()
+        ))?;
+
+    let chapter_json: serde_json::Value = serde_json::from_str(&metadata_str)
+        .wrap_err(format!(
+            "将`{}`中的`章节元数据.json`反序列化为serde_json::Value失败",
+            archive_path.display()
+        ))?;
+
+    let chapter_id = chapter_json
+        .get("chapterId")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_eyre(format!(
+            "`{}`中的`章节元数据.json`没有`chapterId`字段",
+            archive_path.display()
+        ))?;
+
+    Ok(chapter_id)
 }

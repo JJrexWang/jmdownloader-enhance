@@ -21,6 +21,8 @@ pub struct ChapterInfo {
     pub is_pdf_exported: bool,
     /// 是否曾导出过 CBZ
     pub is_cbz_exported: bool,
+    /// 章节是否被打包成压缩包（章节下载目录已替换为单个压缩包文件）
+    pub is_archived: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_downloaded: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,6 +67,11 @@ impl ChapterInfo {
         )
     )]
     pub fn save_chapter_metadata(&self) -> eyre::Result<()> {
+        // 已归档章节的元数据保存在归档文件内部，不需要再写一次到外层
+        if self.is_archived {
+            return Ok(());
+        }
+
         let mut chapter_info = self.clone();
         // 将 is_downloaded 和 chapter_download_dir 字段设置为 None，
         // 这样能使这些字段在序列化时被忽略。
