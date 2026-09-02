@@ -7,6 +7,8 @@ use std::{
     time::Duration,
 };
 
+use parking_lot::Mutex;
+
 use eyre::{eyre, OptionExt, WrapErr};
 use tauri::AppHandle;
 use tauri_specta::Event;
@@ -38,6 +40,8 @@ pub struct DownloadTask {
     pub delete_sender: watch::Sender<()>,
     pub downloaded_img_count: Arc<AtomicU32>,
     pub total_img_count: Arc<AtomicU32>,
+    /// 下载失败的图片索引（0-based），用于在章节完成时汇总日志。
+    pub failed_indexes: Arc<Mutex<Vec<usize>>>,
 }
 
 impl DownloadTask {
@@ -73,6 +77,7 @@ impl DownloadTask {
             delete_sender,
             downloaded_img_count: Arc::new(AtomicU32::new(0)),
             total_img_count: Arc::new(AtomicU32::new(0)),
+            failed_indexes: Arc::new(Mutex::new(Vec::new())),
         });
 
         tauri::async_runtime::spawn(task.clone().process());
@@ -191,17 +196,61 @@ impl DownloadTask {
 
         let downloaded_img_count = self.downloaded_img_count.load(Ordering::Relaxed);
         let total_img_count = self.total_img_count.load(Ordering::Relaxed);
-        if downloaded_img_count != total_img_count {
-            let err_title = "下载不完整";
-            let message =
-                eyre!("总共有`{total_img_count}`张图片，但只下载了`{downloaded_img_count}`张")
-                    .to_message();
-            tracing::error!(err_title, message);
+        let missing_count = total_img_count.saturating_sub(downloaded_img_count);
 
-            self.set_state(DownloadTaskState::Failed);
-            self.emit_download_task_update_event();
+        // 收集失败的图片索引（0-based），并按 1-based 排序后写入日志，便于用户排查。
+        let failed_indexes_1based = {
+            let mut guard = self.failed_indexes.lock();
+            guard.sort_unstable();
+            guard.iter().map(|i| i + 1).collect::<Vec<_>>()
+        };
 
-            return;
+        if missing_count > 0 {
+            let threshold = self.app.get_config().read().missing_image_threshold;
+            let ctx = format!(
+                "comic_id={} comic_title={} chapter_id={} chapter_title={} order={} total={} downloaded={} missing={} missing_indexes={:?} threshold={}",
+                self.comic.id,
+                self.comic.name,
+                self.chapter_info.chapter_id,
+                self.chapter_info.chapter_title,
+                self.chapter_info.order,
+                total_img_count,
+                downloaded_img_count,
+                missing_count,
+                failed_indexes_1based,
+                threshold,
+            );
+
+            if missing_count > threshold {
+                // 超过阈值：保持原行为，整章作废
+                let err_title = "下载不完整";
+                let message = eyre!(
+                    "总共有`{total_img_count}`张图片，但只下载了`{downloaded_img_count}`张，超过阈值`{threshold}`"
+                )
+                .to_message();
+                tracing::error!(err_title, message);
+                tracing::error!(
+                    target: "chapter_download_failure",
+                    "[chapter-download-failure] {ctx}"
+                );
+
+                self.set_state(DownloadTaskState::Failed);
+                self.emit_download_task_update_event();
+
+                return;
+            }
+
+            // 在阈值内：降级为告警，继续走完流程（重命名 + 保存元数据 + 可能的归档）
+            let warn_title = "章节下载不完整（已容忍）";
+            let warn_msg = format!(
+                "总共有`{total_img_count}`张图片，下载了`{downloaded_img_count}`张，缺失`{missing_count}`张（在阈值`{threshold}`内），将继续处理已下载的图片"
+            );
+            tracing::warn!(warn_title, warn_msg);
+            tracing::warn!(
+                target: "chapter_download_failure",
+                "[chapter-download-warning] {ctx}"
+            );
+            // 仍以 Completed 收尾，UI 上的 `downloadedImgCount/totalImgCount` 比例会自动反映缺图
         }
 
         if let Err(err) = self.rename_temp_download_dir(&temp_download_dir) {

@@ -292,7 +292,11 @@ exportSkipMode: ExportSkipMode;
 /**
  * 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
  */
-chapterArchiveFormat: ChapterArchiveFormat }
+chapterArchiveFormat: ChapterArchiveFormat; 
+/**
+ * 章节下载缺失图片容忍阈值：当缺失图片数 ≤ 此值时，视为下载成功并降级为告警
+ */
+missingImageThreshold: number }
 export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
 export type DownloadAllFavoritesEvent = { event: "GetFavoritesStart" } | { event: "GetComicsProgress"; data: { current: number; total: number } } | { event: "StartCreateDownloadTasks"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreatingDownloadTask"; data: { comicId: number; current: number } } | { event: "EndCreateDownloadTasks"; data: { comicId: number } } | { event: "GetComicsEnd" }
 export type DownloadEvent = { event: "Speed"; data: { speed: string } } | { event: "Sleeping"; data: { chapterId: number; remainingSec: number } } | { event: "TaskCreate"; data: { state: DownloadTaskState; comic: Comic; chapterInfo: ChapterInfo; downloadedImgCount: number; totalImgCount: number } } | { event: "TaskDelete"; data: { chapterId: number } } | { event: "TaskUpdate"; data: { chapterId: number; state: DownloadTaskState; downloadedImgCount: number; totalImgCount: number } }

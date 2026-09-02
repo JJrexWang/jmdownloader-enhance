@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useStore } from '../../../store.ts'
-import { NCheckbox, NInput, NRadio, NRadioGroup, NTooltip, useMessage } from 'naive-ui'
+import { NCheckbox, NInput, NInputNumber, NRadio, NRadioGroup, NTooltip, useMessage } from 'naive-ui'
 
 const store = useStore()
 
 const message = useMessage()
 
 const dirFmt = ref<string>(store.config?.dirFmt ?? '')
+const missingImageThreshold = ref<number>(store.config?.missingImageThreshold ?? 5)
 
 watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], () => {
   message.warning('切换线路后可能需要重新登录')
@@ -141,6 +142,33 @@ watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], 
         适合只在本地用阅读器查看的场景。
       </n-tooltip>
     </n-radio-group>
+
+    <span class="font-bold mt-2">缺失图片容忍</span>
+    <div class="flex items-center gap-2">
+      <n-tooltip placement="top" trigger="hover" :width="350">
+        <template #trigger>
+          <n-input-number
+            v-model:value="missingImageThreshold"
+            size="small"
+            :min="0"
+            :max="9999"
+            :show-button="false"
+            placeholder="缺失图片容忍阈值"
+            @blur="store.config.missingImageThreshold = missingImageThreshold"
+            @keydown.enter="store.config.missingImageThreshold = missingImageThreshold" />
+        </template>
+        <div>
+          当一个章节下载结束时，若缺失的图片数 <span class="rounded bg-gray-500 px-1 text-white">≤</span> 此阈值，则视为下载成功（仅在日志中告警），不会让整章作废。
+        </div>
+        <div class="text-orange mt-1">
+          设为 <span class="rounded bg-gray-500 px-1 text-white">0</span> 时维持上游原行为：只要缺一张就整章失败，需要手动重试整章。
+        </div>
+        <div class="text-gray-500 mt-1">
+          失败的图片索引会写入日志（搜索 <span class="rounded bg-gray-500 px-1 text-white">chapter-download-warning</span> 或 <span class="rounded bg-gray-500 px-1 text-white">chapter-download-failure</span>），便于手动补图。
+        </div>
+      </n-tooltip>
+      <span class="text-gray-500">张</span>
+    </div>
 
     <span class="font-bold mt-2">其他</span>
     <n-checkbox class="w-fit" v-model:checked="store.config.shouldDownloadCover">下载封面</n-checkbox>

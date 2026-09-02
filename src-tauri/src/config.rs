@@ -39,6 +39,9 @@ pub struct Config {
     pub export_skip_mode: ExportSkipMode,
     /// 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
     pub chapter_archive_format: ChapterArchiveFormat,
+    /// 章节下载缺失图片容忍阈值：当缺失图片数 ≤ 此值时，视为下载成功并降级为告警，
+    /// 不会让整章作废。设为 `0` 则保留原行为（只要缺一张就整章失败）。
+    pub missing_image_threshold: u32,
 }
 
 impl Config {
@@ -132,6 +135,8 @@ impl Config {
             enable_merge_pdf: true,
             export_skip_mode: ExportSkipMode::default(),
             chapter_archive_format: ChapterArchiveFormat::default(),
+            // 默认允许最多 5 张图片缺失（兼容长章节偶发的瞬时失败）
+            missing_image_threshold: 5,
         }
     }
 }
