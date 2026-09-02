@@ -461,13 +461,25 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
     let interval_sec = config.read().update_downloaded_comics_interval_sec;
     let _ = UpdateDownloadedComicsEvent::GetComicStart { total }.emit(&app);
 
+    // 一次性构建已下载漫画 id -> 目录 的映射，避免每个漫画都触发一次全目录 walk。
+    // 后台章节下载完成触发的 invalidate 只会让本次循环结束后失效，下一次调用会重建。
+    let id_to_dir_map = match app.get_downloaded_comics_index().get_or_build(&app) {
+        Ok(map) => map,
+        Err(err) => {
+            return Err(CommandError::from(
+                "更新库存过程中，构建已下载漫画索引失败",
+                err,
+            ));
+        }
+    };
+
     for (i, downloaded_comic) in downloaded_comics.into_iter().enumerate() {
         let comic_title = &downloaded_comic.name;
         let comic_id = downloaded_comic.id;
         let current = (i + 1) as i64;
         let _ = UpdateDownloadedComicsEvent::GetComicProgress { current, total }.emit(&app);
 
-        let comic = match utils::get_comic(app.clone(), comic_id)
+        let comic = match utils::get_comic_with_map(app.clone(), comic_id, Arc::clone(&id_to_dir_map))
             .await
             .wrap_err(format!("获取ID为`{comic_id}`的漫画失败"))
         {
