@@ -48,6 +48,10 @@ jobs:
 
       - name: Build tauri app
         uses: tauri-apps/tauri-action@v0
+        with:
+          # 预发布标识不能是 -enhance.X 这种非纯数字串,
+          # 否则 MSI 打包会拒掉(--bundles nsis 只产 NSIS,绕开这层校验)
+          args: --bundles nsis
 
       - name: Create artifacts directory
         run: mkdir -p artifacts
