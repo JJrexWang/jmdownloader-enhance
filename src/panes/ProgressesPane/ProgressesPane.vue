@@ -50,10 +50,19 @@ onMounted(async () => {
 
         if (state === 'Completed') {
           progressData.chapterInfo.isDownloaded = true
-          await syncPickedComic()
-          await syncComicInSearch(progressData)
-          await syncComicInFavorite(progressData)
-          await syncComicInWeekly(progressData)
+          // 只在相关 tab 实际加载了数据时才同步；否则跳过 4 次 IPC，避免每次章节完成都触发全目录 walk
+          if (store.pickedComic !== undefined && store.pickedComic.id === progressData.comic.id) {
+            await syncPickedComic()
+          }
+          if (store.searchResult !== undefined) {
+            await syncComicInSearch(progressData)
+          }
+          if (store.getFavoriteResult !== undefined) {
+            await syncComicInFavorite(progressData)
+          }
+          if (store.getWeeklyResult !== undefined) {
+            await syncComicInWeekly(progressData)
+          }
         }
 
         progressData.percentage = (downloadedImgCount / totalImgCount) * 100
