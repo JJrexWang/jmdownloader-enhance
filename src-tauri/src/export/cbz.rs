@@ -15,8 +15,8 @@ use crate::{
     config::ExportSkipMode,
     events::ExportCbzEvent,
     export::{
-        get_downloaded_chapters, get_downloaded_chapters_by_ids, get_image_paths,
-        ComicExportLockGuard, ExportFormat,
+        get_downloaded_chapters, get_downloaded_chapters_by_ids,
+        get_image_paths_with_archive_support, ComicExportLockGuard, ExportFormat,
     },
     extensions::{AppHandleExt, EyreReportToMessage},
     types::{ChapterInfo, Comic, ComicInfo},
@@ -201,7 +201,11 @@ fn cbz_internal(
             .write_all(comic_info_xml.as_bytes())
             .wrap_err("写入`ComicInfo.xml`失败")?;
 
-        let image_paths = get_image_paths(chapter_download_dir, false).wrap_err(format!(
+        let (image_paths, temp_to_cleanup) = get_image_paths_with_archive_support(
+            chapter_download_dir,
+            false,
+        )
+        .wrap_err(format!(
             "获取`{}`中的图片失败",
             chapter_download_dir.display()
         ))?;
@@ -227,6 +231,11 @@ fn cbz_internal(
         zip_writer
             .finish()
             .wrap_err(format!("关闭`{}`失败", zip_path.display()))?;
+
+        // 归档章节 → 解压图片到过临时目录，导出完成后清理
+        if let Some(temp_dir) = temp_to_cleanup {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
 
         // 更新章节导出状态
         chapter_info.is_cbz_exported = true;
