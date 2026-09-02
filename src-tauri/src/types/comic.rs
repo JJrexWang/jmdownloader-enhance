@@ -81,8 +81,11 @@ impl Comic {
                 .wrap_err("为旧版本创建章节元数据失败")?;
         }
 
-        let dir_fmt = app.get_config().read().dir_fmt.clone();
-        comic.update_fields(&id_to_dir_map, &dir_fmt)?;
+        let config = app.get_config();
+        let config = config.read();
+        let dir_fmt = config.dir_fmt.clone();
+        let mode = config.chinese_normalization;
+        comic.update_fields(&id_to_dir_map, &dir_fmt, mode)?;
 
         Ok(comic)
     }
@@ -158,12 +161,13 @@ impl Comic {
         &mut self,
         id_to_dir_map: &HashMap<i64, PathBuf>,
         dir_fmt: &str,
+        mode: crate::config::ChineseNormalization,
     ) -> eyre::Result<()> {
         if let Some(comic_download_dir) = id_to_dir_map.get(&self.id) {
             self.comic_download_dir = Some(comic_download_dir.clone());
             self.is_downloaded = Some(true);
 
-            self.update_chapter_infos_fields(dir_fmt)
+            self.update_chapter_infos_fields(dir_fmt, mode)
                 .wrap_err("更新章节信息字段失败")?;
         }
 
@@ -171,7 +175,11 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(metadata_path = %metadata_path.display()))]
-    pub fn from_metadata(metadata_path: &Path, dir_fmt: &str) -> eyre::Result<Comic> {
+    pub fn from_metadata(
+        metadata_path: &Path,
+        dir_fmt: &str,
+        mode: crate::config::ChineseNormalization,
+    ) -> eyre::Result<Comic> {
         let comic_json = std::fs::read_to_string(metadata_path)?;
         let mut comic = serde_json::from_str::<Comic>(&comic_json)
             .wrap_err("将元数据文件反序列化为Comic失败")?;
@@ -189,7 +197,7 @@ impl Comic {
         comic.comic_download_dir = Some(comic_download_dir);
         comic.is_downloaded = Some(true);
 
-        comic.update_chapter_infos_fields(dir_fmt)?;
+        comic.update_chapter_infos_fields(dir_fmt, mode)?;
 
         Ok(comic)
     }
@@ -349,7 +357,11 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]
-    fn update_chapter_infos_fields(&mut self, dir_fmt: &str) -> eyre::Result<()> {
+    fn update_chapter_infos_fields(
+        &mut self,
+        dir_fmt: &str,
+        mode: crate::config::ChineseNormalization,
+    ) -> eyre::Result<()> {
         let Some(comic_download_dir) = &self.comic_download_dir else {
             return Err(eyre!("`comic_download_dir`字段为`None`"));
         };
@@ -415,7 +427,7 @@ impl Comic {
                 // 因此无论用户怎么自定义 dir_fmt 都能识别归档所属的章节。
                 let chapter_id = match read_chapter_id_from_archive(entry_path) {
                     Ok(id) => id,
-                    Err(inner_err) => match self.match_chapter_id_from_archive_name(entry_path, dir_fmt) {
+                    Err(inner_err) => match self.match_chapter_id_from_archive_name(entry_path, dir_fmt, mode) {
                         Some(id) => {
                             tracing::warn!(
                                 "从归档`{}`读取`chapterId`失败（{}），已按 dir_fmt=`{dir_fmt}` 反推匹配到 chapterId={}；后续下载会自动把 章节元数据.json 写入压缩包",
@@ -505,6 +517,7 @@ impl Comic {
         &self,
         archive_path: &Path,
         dir_fmt: &str,
+        mode: crate::config::ChineseNormalization,
     ) -> Option<i64> {
         let file_name = archive_path.file_name()?.to_str()?;
         let stem = archive_path.file_stem()?.to_str()?;
@@ -529,7 +542,7 @@ impl Comic {
                     .find(|c| c.chapter_id == parsed_id)
                 {
                     let expected =
-                        match Self::expected_chapter_dir_name(dir_fmt, &author, self, chapter) {
+                        match Self::expected_chapter_dir_name(dir_fmt, &author, self, chapter, mode) {
                             Ok(name) => name,
                             Err(err) => {
                                 tracing::warn!(
@@ -550,7 +563,7 @@ impl Comic {
 
         // 形态 2：`<chapter_dir_name>.zip` 或已被剥掉 `__<id>` 的 base_stem
         for chapter in &self.chapter_infos {
-            let expected = match Self::expected_chapter_dir_name(dir_fmt, &author, self, chapter)
+            let expected = match Self::expected_chapter_dir_name(dir_fmt, &author, self, chapter, mode)
             {
                 Ok(name) => name,
                 Err(_) => continue,
@@ -570,6 +583,7 @@ impl Comic {
         author: &str,
         comic: &Comic,
         chapter: &ChapterInfo,
+        mode: crate::config::ChineseNormalization,
     ) -> eyre::Result<String> {
         let params = DirFmtParams {
             comic_id: comic.id,
@@ -579,7 +593,7 @@ impl Comic {
             chapter_title: chapter.chapter_title.clone(),
             order: chapter.order,
         };
-        ChapterInfo::compute_chapter_dir_name(dir_fmt, &params)
+        ChapterInfo::compute_chapter_dir_name(dir_fmt, &params, mode)
     }
 }
 

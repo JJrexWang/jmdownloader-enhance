@@ -145,12 +145,16 @@ impl ChapterInfo {
         app: &AppHandle,
         fmt_params: &DirFmtParams,
     ) -> eyre::Result<PathBuf> {
-        let (download_dir, dir_fmt) = {
+        let (download_dir, dir_fmt, mode) = {
             let config = app.get_config();
             let config = config.read();
-            (config.download_dir.clone(), config.dir_fmt.clone())
+            (
+                config.download_dir.clone(),
+                config.dir_fmt.clone(),
+                config.chinese_normalization,
+            )
         };
-        let path = Self::build_chapter_download_path(&dir_fmt, &download_dir, fmt_params)?;
+        let path = Self::build_chapter_download_path(&dir_fmt, &download_dir, fmt_params, mode)?;
         Ok(path)
     }
 
@@ -164,8 +168,9 @@ impl ChapterInfo {
         dir_fmt: &str,
         download_dir: &Path,
         fmt_params: &DirFmtParams,
+        mode: crate::config::ChineseNormalization,
     ) -> eyre::Result<PathBuf> {
-        let dir_names = compute_dir_names_from_fmt(dir_fmt, fmt_params)?;
+        let dir_names = compute_dir_names_from_fmt(dir_fmt, fmt_params, mode)?;
 
         if dir_names.len() < 2 {
             let err_msg =
@@ -189,8 +194,9 @@ impl ChapterInfo {
     pub fn compute_chapter_dir_name(
         dir_fmt: &str,
         fmt_params: &DirFmtParams,
+        mode: crate::config::ChineseNormalization,
     ) -> eyre::Result<String> {
-        let dir_names = compute_dir_names_from_fmt(dir_fmt, fmt_params)?;
+        let dir_names = compute_dir_names_from_fmt(dir_fmt, fmt_params, mode)?;
         // dir_fmt 至少两级（最后一级才是章节目录），但若用户配置只有一级，
         // 我们就退而求其次用最后那段——下面的主流程会再校验层级。
         Ok(dir_names
@@ -234,7 +240,11 @@ impl ChapterInfo {
 ///
 /// 与原 `get_chapter_download_dir_by_fmt` 中那段循环逻辑等价，单独抽出来便于
 /// `update_chapter_infos_fields` 在没有 AppHandle 的情况下复用。
-fn compute_dir_names_from_fmt(dir_fmt: &str, fmt_params: &DirFmtParams) -> eyre::Result<Vec<String>> {
+fn compute_dir_names_from_fmt(
+    dir_fmt: &str,
+    fmt_params: &DirFmtParams,
+    mode: crate::config::ChineseNormalization,
+) -> eyre::Result<Vec<String>> {
     use strfmt::strfmt;
 
     let json_value =
@@ -259,6 +269,10 @@ fn compute_dir_names_from_fmt(dir_fmt: &str, fmt_params: &DirFmtParams) -> eyre:
     let mut dir_names = Vec::new();
     for fmt in dir_fmt_parts {
         let dir_name = strfmt(fmt, &vars).wrap_err("格式化目录名失败")?;
+        // 在写到磁盘之前做一次简繁中文归一化，避免同一本漫画因登录语言
+        // 不一致（简中/繁中/日文等）被生成两个不同目录。OpenCC 按字符级
+        // 处理，Hangul（韩文）、日文假名、英文、数字、标点都不会被连带改写。
+        let dir_name = crate::text::normalize(&dir_name, mode);
         let dir_name = utils::filename_filter(&dir_name);
         if !dir_name.is_empty() {
             dir_names.push(dir_name);

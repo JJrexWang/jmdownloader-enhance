@@ -170,6 +170,31 @@ watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], 
       <span class="text-gray-500">张</span>
     </div>
 
+    <span class="font-bold mt-2">中文归一化</span>
+    <n-radio-group v-model:value="store.config.chineseNormalization">
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-radio value="None">不转换</n-radio>
+        </template>
+        保持从网站拿到的原文（简中、繁中、日文、韩文等）落地到磁盘目录。
+        <div class="text-orange mt-1">同一本漫画在不同登录语言下会被生成不同目录。</div>
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-radio value="ToSimplified">转为简体</n-radio>
+        </template>
+        <span class="rounded bg-gray-500 px-1 text-white">默认</span>。把繁中、日文（汉字部分）转为简体再创建目录，避免同一本漫画因为网站返回的语言不同被开成多个目录。
+        <div class="text-gray-500 mt-1">韩文（Hangul）、日文假名、英文、数字、标点不会被 OpenCC 连带改写。</div>
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover" :width="380">
+        <template #trigger>
+          <n-radio value="ToTraditional">转为繁体</n-radio>
+        </template>
+        把简中、日文（汉字部分）转为繁体再创建目录。
+        <div class="text-gray-500 mt-1">韩文（Hangul）、日文假名、英文、数字、标点不会被 OpenCC 连带改写。</div>
+      </n-tooltip>
+    </n-radio-group>
+
     <span class="font-bold mt-2">其他</span>
     <n-checkbox class="w-fit" v-model:checked="store.config.shouldDownloadCover">下载封面</n-checkbox>
   </div>

@@ -26,6 +26,7 @@ mod extensions;
 mod jm_client;
 mod logger;
 mod responses;
+mod text;
 mod types;
 mod utils;
 
