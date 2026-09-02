@@ -108,9 +108,15 @@ pub fn pack_dir_as_archive(
     Ok(())
 }
 
-/// 给定章节目录路径与归档格式，返回归档文件应当写入的路径。
+/// 给定章节目录路径、章节 ID 与归档格式，返回归档文件应当写入的路径。
+///
+/// 文件名采用 `<dir_name>__<chapter_id>.<ext>` 这种约定：在原目录名后面追加一个
+/// `__<chapter_id>` 后缀。这样即便压缩包内部没有 `章节元数据.json`（例如旧版本
+/// 打包流程遗漏的情况），`update_chapter_infos_fields` 的文件名回退逻辑也能
+/// 直接从后缀里拿到 chapter_id，避免依赖目录名格式的脆弱匹配。
 pub fn chapter_archive_path(
     chapter_download_dir: &Path,
+    chapter_id: i64,
     format: ChapterArchiveFormat,
 ) -> eyre::Result<PathBuf> {
     let dir_name = chapter_download_dir
@@ -121,5 +127,5 @@ pub fn chapter_archive_path(
     let parent = chapter_download_dir
         .parent()
         .ok_or_else(|| eyre::eyre!("`{}`没有父目录", chapter_download_dir.display()))?;
-    Ok(parent.join(format!("{dir_name}.{}", extension_for(format))))
+    Ok(parent.join(format!("{dir_name}__{chapter_id}.{}", extension_for(format))))
 }

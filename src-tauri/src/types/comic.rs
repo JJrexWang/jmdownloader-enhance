@@ -542,23 +542,78 @@ fn read_chapter_id_from_archive(archive_path: &Path) -> eyre::Result<i64> {
 }
 
 /// 当压缩包里没有 `章节元数据.json` 时（例如早期版本打包流程未把元数据写进 zip），
-/// 按 zip 文件名回退匹配章节。pack_chapter_as_archive 会把章节目录名（默认等于
-/// chapter_title）作为 zip 文件名，所以「去掉扩展名」后就得到 chapter_title，
-/// 再到 chapter_infos 里查相同的 title 即可。
+/// 按 zip 文件名回退匹配章节。识别策略按优先级尝试：
 ///
-/// 仅在默认 dir_fmt（`{comic_title}/{chapter_title}`）下保证可靠；用户自定义
-/// dir_fmt 时这个匹配只是猜测，无法识别时返回 None 让调用方跳过。
+/// 1. **文件名后缀约定**：当前 `chapter_archive_path` 会把 chapter_id 以
+///    `<dir_name>__<chapter_id>.zip` 的形式追加在文件名末尾，这里直接尝试
+///    解析末尾的 `<i64>`。这是最稳妥的路径，不依赖 dir_fmt。
+/// 2. **默认 dir_fmt（`{comic_title}/{chapter_title}`）**：`file_stem` 直接等于
+///    `chapter_title`，整体相等即可匹配。
+/// 3. **`{order} - {chapter_title}` 风格**：用户的 dir_fmt
+///    `[{author}] {comic_title}({comic_id})/{order} - {chapter_title}` 实际上
+///    会把 `{order} - ` 前缀塞进章节目录名里（与 chapter_title 内的「第N话」重复），
+///    所以我们也要尝试 `format!("{order} - {chapter_title}")` 的整体匹配。
+/// 4. **末尾 `chapter_title` 子串**：宽松兜底，若 file_stem 以 chapter_title 结尾，
+///    且前缀是合理的「序号 + 分隔符」（如 `12_`、`12 - `、`12.` 等），且前缀能解析
+///    成对应 chapter 的 order，则视为匹配。
+///
+/// 全部失败时返回 None，调用方会按找不到 chapter_id 处理（warn 后跳过该归档）。
 fn fallback_chapter_id_from_archive_name(
     archive_path: &Path,
     chapter_infos: &[ChapterInfo],
 ) -> Option<i64> {
+    let file_name = archive_path.file_name()?.to_str()?;
     let stem = archive_path.file_stem()?.to_str()?;
     if stem.is_empty() {
         return None;
     }
-    chapter_infos
+
+    // 1) 优先尝试 `<...>__<chapter_id>.<ext>` 后缀约定。
+    //    file_name 例如 `88 - 第88话...__1234567.zip`，去掉扩展名后是
+    //    `88 - 第88话...__1234567`，按 `__` 切分最后一个段。
+    if let Some(last_dunder_idx) = file_name.rfind("__") {
+        let after_dunder = &file_name[last_dunder_idx + 2..];
+        // after_dunder 形如 `<id>.<ext>` 或只是 `<id>`（极端情况）
+        let id_part = after_dunder.split('.').next().unwrap_or("");
+        if let Ok(id) = id_part.parse::<i64>() {
+            if chapter_infos.iter().any(|c| c.chapter_id == id) {
+                return Some(id);
+            }
+        }
+    }
+
+    // 2) 默认 dir_fmt：`file_stem == chapter_title`
+    if let Some(c) = chapter_infos
         .iter()
-        .find(|chapter| chapter.chapter_title == stem)
-        .map(|chapter| chapter.chapter_id)
+        .find(|c| c.chapter_title == stem)
+    {
+        return Some(c.chapter_id);
+    }
+
+    // 3) `{order} - {chapter_title}` 风格
+    if let Some(c) = chapter_infos
+        .iter()
+        .find(|c| stem == format!("{} - {}", c.order, c.chapter_title))
+    {
+        return Some(c.chapter_id);
+    }
+
+    // 4) 宽松：file_stem 以 chapter_title 结尾，前缀提取出来能解析成 order
+    for chapter in chapter_infos {
+        if !stem.ends_with(&chapter.chapter_title) {
+            continue;
+        }
+        let prefix = &stem[..stem.len() - chapter.chapter_title.len()];
+        // 只保留数字，过滤所有分隔符（空格、`-`、`.`、`_` 等），避免分隔符打乱解析
+        let digits: String = prefix.chars().filter(|c| c.is_ascii_digit()).collect();
+        if let Ok(order) = digits.parse::<i64>() {
+            if order == chapter.order {
+                return Some(chapter.chapter_id);
+            }
+        }
+    }
+
+    let _ = stem;
+    None
 }
 

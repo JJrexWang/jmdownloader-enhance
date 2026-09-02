@@ -387,8 +387,12 @@ impl DownloadTask {
             .as_ref()
             .ok_or_eyre("`chapter_download_dir`字段为`None`")?
             .clone();
-        let archive_path = archive::chapter_archive_path(&chapter_download_dir, format)
-            .wrap_err("计算章节归档路径失败")?;
+        let archive_path = archive::chapter_archive_path(
+            &chapter_download_dir,
+            self.chapter_info.chapter_id,
+            format,
+        )
+        .wrap_err("计算章节归档路径失败")?;
 
         // 1. 把章节目录（含 章节元数据.json 与所有图片）打包成压缩包
         archive::pack_dir_as_archive(&chapter_download_dir, &archive_path, format)
