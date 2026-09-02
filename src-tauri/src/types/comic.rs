@@ -402,18 +402,36 @@ impl Comic {
                         .unwrap_or(false);
                 }
             } else if entry.is_chapter_archive() {
-                // 已打包的章节：chapter_dir_name.zip / .cbz，章节元数据.json 位于压缩包内部
+                // 已打包的章节：chapter_dir_name.zip / .cbz，章节元数据.json 位于压缩包内部。
+                // 优先尝试从压缩包内读取章节元数据；若压缩包内没有（例如早期版本打包时
+                // 没有把 章节元数据.json 写进 zip 的情况），则回退到「zip 文件名 = 章节目录名
+                // = 章节标题」的匹配。仅在默认 dir_fmt（{comic_title}/{chapter_title}）下
+                // 有效，命中后会以 warn 级别打日志提示用户以后再下载就会自动修复。
                 let chapter_id = match read_chapter_id_from_archive(entry_path) {
                     Ok(id) => id,
-                    Err(err) => {
-                        let err_title = format!(
-                            "从归档`{}`读取`chapterId`失败",
-                            entry_path.display()
-                        );
-                        let message = err.to_message();
-                        tracing::warn!(err_title, message);
-                        continue;
-                    }
+                    Err(inner_err) => match fallback_chapter_id_from_archive_name(
+                        entry_path,
+                        &self.chapter_infos,
+                    ) {
+                        Some(id) => {
+                            tracing::warn!(
+                                "从归档`{}`读取`chapterId`失败（{}），已按文件名回退匹配到 chapterId={}；后续下载会自动把 章节元数据.json 写入压缩包",
+                                entry_path.display(),
+                                inner_err.to_message(),
+                                id,
+                            );
+                            id
+                        }
+                        None => {
+                            let err_title = format!(
+                                "从归档`{}`读取`chapterId`失败",
+                                entry_path.display()
+                            );
+                            let message = inner_err.to_message();
+                            tracing::warn!(err_title, message);
+                            continue;
+                        }
+                    },
                 };
 
                 if let Some(chapter_info) = self
@@ -522,3 +540,25 @@ fn read_chapter_id_from_archive(archive_path: &Path) -> eyre::Result<i64> {
 
     Ok(chapter_id)
 }
+
+/// 当压缩包里没有 `章节元数据.json` 时（例如早期版本打包流程未把元数据写进 zip），
+/// 按 zip 文件名回退匹配章节。pack_chapter_as_archive 会把章节目录名（默认等于
+/// chapter_title）作为 zip 文件名，所以「去掉扩展名」后就得到 chapter_title，
+/// 再到 chapter_infos 里查相同的 title 即可。
+///
+/// 仅在默认 dir_fmt（`{comic_title}/{chapter_title}`）下保证可靠；用户自定义
+/// dir_fmt 时这个匹配只是猜测，无法识别时返回 None 让调用方跳过。
+fn fallback_chapter_id_from_archive_name(
+    archive_path: &Path,
+    chapter_infos: &[ChapterInfo],
+) -> Option<i64> {
+    let stem = archive_path.file_stem()?.to_str()?;
+    if stem.is_empty() {
+        return None;
+    }
+    chapter_infos
+        .iter()
+        .find(|chapter| chapter.chapter_title == stem)
+        .map(|chapter| chapter.chapter_id)
+}
+

@@ -264,6 +264,17 @@ impl DownloadTask {
             return;
         }
 
+        // 必须在打包前先把 章节元数据.json 写到章节目录里，否则 pack 之后的 zip/cbz
+        // 不包含元数据，update_chapter_infos_fields 在重新加载时无法从归档里读到
+        // chapterId，会把这个章节当成「未下载」；本地库存的更新库存也会因为同一本
+        // 漫画检测不到任何已下载章节而把整本跳过。self.chapter_info 此时
+        // is_archived 仍是默认值 false，所以 save_chapter_metadata 不会被短路。
+        if let Err(err) = self.chapter_info.save_chapter_metadata() {
+            let err_title = "保存章节元数据失败";
+            let message = err.to_message();
+            tracing::error!(err_title, message);
+        }
+
         // 如果配置了章节归档，则把章节目录（已包含 章节元数据.json 与所有图片）打包成压缩包，
         // 然后删除原目录，并将漫画元数据中的章节路径更新为压缩包路径。
         // 归档完成后章节元数据已经位于压缩包内部，因此不需要再调用 save_chapter_metadata。
@@ -281,15 +292,8 @@ impl DownloadTask {
         } else {
             false
         };
-
-        // 非归档章节仍按原逻辑保存 章节元数据.json；归档章节元数据已在压缩包内，无需保存。
-        if !chapter_is_archived {
-            if let Err(err) = self.chapter_info.save_chapter_metadata() {
-                let err_title = "保存章节元数据失败";
-                let message = err.to_message();
-                tracing::error!(err_title, message);
-            }
-        }
+        // pack 成功时元数据已经位于压缩包内部；pack 失败时上面也已经写过了，因此这里不重复落盘
+        let _ = chapter_is_archived;
 
         // 章节落盘后失效已下载索引缓存，下次读取时重建
         self.app.get_downloaded_comics_index().invalidate();

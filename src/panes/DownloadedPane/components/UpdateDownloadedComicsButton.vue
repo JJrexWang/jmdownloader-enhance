@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { MessageReactive, NButton, NPopconfirm, useMessage } from 'naive-ui'
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { commands, events, UpdateDownloadedComicsEvent } from '../../../bindings.ts'
 import { useStore } from '../../../store.ts'
 
@@ -10,10 +10,9 @@ const store = useStore()
 
 const popConfirmShowing = ref<boolean>(false)
 
-const rejectCooldown = ref<number>(0)
-const rejectButtonDisabled = computed(() => rejectCooldown.value > 0)
-
-const countdownInterval = ref<ReturnType<typeof setInterval>>(setInterval(() => {}, 1000))
+// 之前有 10 秒倒计时让用户等待才能点「不调整直接下载」，
+// 现在直接可点，去掉倒计时逻辑。
+const rejectButtonDisabled = ref<boolean>(false)
 
 type ProgressData = Extract<UpdateDownloadedComicsEvent, { event: 'CreateDownloadTasksStart' }>['data'] & {
   progressMessage: MessageReactive
@@ -111,18 +110,7 @@ async function reject() {
 }
 
 function handleButtonClick() {
-  // 清理可能存在的旧计时器
-  if (countdownInterval.value) {
-    clearInterval(countdownInterval.value)
-  }
-  rejectCooldown.value = 10
-
-  countdownInterval.value = setInterval(() => {
-    rejectCooldown.value -= 1
-    if (rejectCooldown.value <= 0) {
-      clearInterval(countdownInterval.value)
-    }
-  }, 1000)
+  // 不再启动倒计时，按钮始终可点
 }
 </script>
 
@@ -141,8 +129,7 @@ function handleButtonClick() {
 
     <template #action>
       <n-button size="small" :disabled="rejectButtonDisabled" @click="reject">
-        <span v-if="rejectButtonDisabled">不调整直接下载 ({{ rejectCooldown }})</span>
-        <span v-else>不调整直接下载</span>
+        <span>不调整直接下载</span>
       </n-button>
       <n-button size="small" type="primary" @click="agree">调整并下载</n-button>
     </template>
