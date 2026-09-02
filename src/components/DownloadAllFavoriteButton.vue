@@ -142,6 +142,13 @@ onMounted(async () => {
       overview.value.currentChaptersDone = 0
     } else if (payload.event === 'FailedComic') {
       const { comicTitle } = payload.data
+      // 第一次失败时就接管「获取阶段」的 loading toast,
+      // 避免所有本都失败/都已经下完时,loading 一直转圈不消失
+      if (prepareMessage !== undefined) {
+        prepareMessage.destroy()
+        prepareMessage = undefined
+        openOverviewNotification()
+      }
       overview.value.failedCount++
       overview.value.failedTitles.push(comicTitle)
       overview.value.doneCount++
@@ -151,6 +158,11 @@ onMounted(async () => {
       const failed = overview.value.failedCount
       const total = overview.value.totalComics
       const succeeded = Math.max(0, total - failed)
+      // 兜底:即便中途没机会销毁,也在这里清掉
+      if (prepareMessage !== undefined) {
+        prepareMessage.destroy()
+        prepareMessage = undefined
+      }
       closeOverviewNotification()
       if (failed === 0) {
         message.success(
@@ -160,10 +172,17 @@ onMounted(async () => {
           { duration: 5000 },
         )
       } else {
-        message.warning(
-          `收藏夹下载任务创建完成:共 ${total} 本,成功 ${succeeded} 本,失败 ${failed} 本(详见日志)`,
-          { duration: 8000 },
-        )
+        const last = overview.value.failedTitles.slice(-5)
+        const more = overview.value.failedTitles.length - last.length
+        const moreHint = more > 0 ? ` ...还有 ${more} 本` : ''
+        const desc = () =>
+          h('div', {}, [
+            h('div', '收藏夹下载任务创建完成'),
+            h('div', `共 ${total} 本,成功 ${succeeded} 本,失败 ${failed} 本(完整列表见日志):`),
+            ...last.map((t) => h('div', { style: 'padding-left: 12px;' }, `· ${t}`)),
+            moreHint ? h('div', { style: 'padding-left: 12px; color: #888;' }, moreHint) : null,
+          ])
+        message.warning(desc, { duration: 8000 })
       }
       resetOverview()
     }
