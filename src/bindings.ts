@@ -274,7 +274,11 @@ isPdfExported: boolean;
 /**
  * 是否曾导出过 CBZ
  */
-isCbzExported: boolean; isDownloaded?: boolean | null; chapterDownloadDir?: string | null }
+isCbzExported: boolean; 
+/**
+ * 章节是否被打包成压缩包（章节下载目录已替换为单个压缩包文件）
+ */
+isArchived: boolean; isDownloaded?: boolean | null; chapterDownloadDir?: string | null }
 export type Comic = { id: number; name: string; addtime: string; description: string; total_views: string; likes: string; chapterInfos: ChapterInfo[]; series_id: string; comment_total: string; author: string[]; tags: string[]; works: string[]; actors: string[]; related_list: RelatedListRespData[]; liked: boolean; is_favorite: boolean; is_aids: boolean; isDownloaded?: boolean | null; comicDownloadDir?: string | null }
 export type ComicInFavorite = { id: number; author: string; description: string | null; name: string; latestEp: string | null; latestEpAid: string | null; image: string; category: CategoryRespData; categorySub: CategorySubRespData; isDownloaded: boolean; comicDownloadDir: string }
 export type ComicInSearch = { id: number; author: string; name: string; image: string; category: CategoryRespData; categorySub: CategorySubRespData; liked: boolean; isFavorite: boolean; updateAt: number; isDownloaded: boolean; comicDownloadDir: string }
@@ -284,7 +288,12 @@ export type Config = { username: string; password: string; downloadDir: string; 
 /**
  * 导出跳过模式
  */
-exportSkipMode: ExportSkipMode }
+exportSkipMode: ExportSkipMode; 
+/**
+ * 章节归档格式：下载完成后是否将每个章节目录打包为压缩包
+ */
+chapterArchiveFormat: ChapterArchiveFormat }
+export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
 export type DownloadAllFavoritesEvent = { event: "GetFavoritesStart" } | { event: "GetComicsProgress"; data: { current: number; total: number } } | { event: "StartCreateDownloadTasks"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreatingDownloadTask"; data: { comicId: number; current: number } } | { event: "EndCreateDownloadTasks"; data: { comicId: number } } | { event: "GetComicsEnd" }
 export type DownloadEvent = { event: "Speed"; data: { speed: string } } | { event: "Sleeping"; data: { chapterId: number; remainingSec: number } } | { event: "TaskCreate"; data: { state: DownloadTaskState; comic: Comic; chapterInfo: ChapterInfo; downloadedImgCount: number; totalImgCount: number } } | { event: "TaskDelete"; data: { chapterId: number } } | { event: "TaskUpdate"; data: { chapterId: number; state: DownloadTaskState; downloadedImgCount: number; totalImgCount: number } }
 export type DownloadFormat = "Jpeg" | "Png" | "Webp"

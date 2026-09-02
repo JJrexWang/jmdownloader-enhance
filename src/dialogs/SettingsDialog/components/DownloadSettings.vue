@@ -118,6 +118,30 @@ watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], 
       </template>
     </n-tooltip>
 
+    <span class="font-bold mt-2">章节归档</span>
+    <n-radio-group v-model:value="store.config.chapterArchiveFormat">
+      <n-tooltip placement="top" trigger="hover">
+        <template #trigger>
+          <n-radio value="None">不打包</n-radio>
+        </template>
+        下载完成后保留章节目录，不做额外处理。
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover">
+        <template #trigger>
+          <n-radio value="Zip">打包为 .zip</n-radio>
+        </template>
+        下载完成后把章节目录（含图片与章节元数据）打包为 <span class="rounded bg-gray-500 px-1 text-white">.zip</span>，
+        再删除原目录；导出 PDF / CBZ 时会自动解压。
+      </n-tooltip>
+      <n-tooltip placement="top" trigger="hover">
+        <template #trigger>
+          <n-radio value="Cbz">打包为 .cbz</n-radio>
+        </template>
+        下载完成后把章节目录打包为 <span class="rounded bg-gray-500 px-1 text-white">.cbz</span>（漫画阅读器约定格式）；
+        适合只在本地用阅读器查看的场景。
+      </n-tooltip>
+    </n-radio-group>
+
     <span class="font-bold mt-2">其他</span>
     <n-checkbox class="w-fit" v-model:checked="store.config.shouldDownloadCover">下载封面</n-checkbox>
   </div>
