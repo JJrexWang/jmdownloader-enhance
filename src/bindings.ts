@@ -309,7 +309,7 @@ disableErrorNotifications: boolean }
 export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
 export type ChineseNormalization = "None" | "ToSimplified" | "ToTraditional"
 export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
-export type DownloadAllFavoritesEvent = { event: "GetFavoritesStart" } | { event: "GetComicsProgress"; data: { current: number; total: number } } | { event: "StartCreateDownloadTasks"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreatingDownloadTask"; data: { comicId: number; current: number } } | { event: "EndCreateDownloadTasks"; data: { comicId: number } } | { event: "GetComicsEnd" }
+export type DownloadAllFavoritesEvent = { event: "GetFavoritesStart" } | { event: "GetComicsProgress"; data: { current: number; total: number; currentComicTitle: string } } | { event: "StartCreateDownloadTasks"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreatingDownloadTask"; data: { comicId: number; current: number } } | { event: "EndCreateDownloadTasks"; data: { comicId: number } } | { event: "FailedComic"; data: { comicId: number | null; comicTitle: string } } | { event: "GetComicsEnd" }
 export type DownloadEvent = { event: "Speed"; data: { speed: string } } | { event: "Sleeping"; data: { chapterId: number; remainingSec: number } } | { event: "TaskCreate"; data: { state: DownloadTaskState; comic: Comic; chapterInfo: ChapterInfo; downloadedImgCount: number; totalImgCount: number } } | { event: "TaskDelete"; data: { chapterId: number } } | { event: "TaskUpdate"; data: { chapterId: number; state: DownloadTaskState; downloadedImgCount: number; totalImgCount: number } }
 export type DownloadFormat = "Jpeg" | "Png" | "Webp"
 export type DownloadTaskState = "Pending" | "Downloading" | "Paused" | "Completed" | "Failed"
@@ -347,7 +347,7 @@ export type RelatedListRespData = { id: string; author: string; name: string; im
 export type SearchResult = { searchQuery: string; total: number; content: ComicInSearch[] }
 export type SearchResultVariant = { SearchResult: SearchResult } | { Comic: Comic }
 export type SearchSort = "Latest" | "View" | "Picture" | "Like"
-export type UpdateDownloadedComicsEvent = { event: "GetComicStart"; data: { total: number } } | { event: "GetComicProgress"; data: { current: number; total: number } } | { event: "CreateDownloadTasksStart"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreateDownloadTaskProgress"; data: { comicId: number; current: number } } | { event: "CreateDownloadTasksEnd"; data: { comicId: number } } | { event: "GetComicEnd" }
+export type UpdateDownloadedComicsEvent = { event: "GetComicStart"; data: { total: number } } | { event: "GetComicProgress"; data: { current: number; total: number; currentComicTitle: string } } | { event: "CreateDownloadTasksStart"; data: { comicId: number; comicTitle: string; current: number; total: number } } | { event: "CreateDownloadTaskProgress"; data: { comicId: number; current: number } } | { event: "CreateDownloadTasksEnd"; data: { comicId: number } } | { event: "FailedComic"; data: { comicId: number; comicTitle: string } } | { event: "GetComicEnd" }
 export type WeeklyType = { id: string; title: string }
 
 /** tauri-specta globals **/

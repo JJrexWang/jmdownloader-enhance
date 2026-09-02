@@ -383,6 +383,11 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
                 let err_title = format!("下载收藏夹过程中，获取漫画`{comic_title}`失败，已跳过");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
+                let _ = DownloadAllFavoritesEvent::FailedComic {
+                    comic_id: None,
+                    comic_title: comic_title.clone(),
+                }
+                .emit(&app);
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
@@ -395,13 +400,23 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
                 let err = err.wrap_err("可能是频率太高，请手动去`配置`里调整`下载整个收藏夹时，每处理完一个收藏夹中的漫画后休息`");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
+                let _ = DownloadAllFavoritesEvent::FailedComic {
+                    comic_id: Some(comic_id),
+                    comic_title: comic_title.clone(),
+                }
+                .emit(&app);
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
         };
 
         let current = (i + 1) as i64;
-        let _ = DownloadAllFavoritesEvent::GetComicsProgress { current, total }.emit(&app);
+        let _ = DownloadAllFavoritesEvent::GetComicsProgress {
+            current,
+            total,
+            current_comic_title: comic.name.clone(),
+        }
+        .emit(&app);
 
         // 给每个漫画未下载的章节创建下载任务
         let chapter_infos: Vec<&ChapterInfo> = comic
@@ -474,10 +489,15 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
     };
 
     for (i, downloaded_comic) in downloaded_comics.into_iter().enumerate() {
-        let comic_title = &downloaded_comic.name;
+        let comic_title = downloaded_comic.name.clone();
         let comic_id = downloaded_comic.id;
         let current = (i + 1) as i64;
-        let _ = UpdateDownloadedComicsEvent::GetComicProgress { current, total }.emit(&app);
+        let _ = UpdateDownloadedComicsEvent::GetComicProgress {
+            current,
+            total,
+            current_comic_title: comic_title.clone(),
+        }
+        .emit(&app);
 
         let comic = match utils::get_comic_with_map(app.clone(), comic_id, Arc::clone(&id_to_dir_map))
             .await
@@ -489,6 +509,11 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
                 let err = err.wrap_err("可能是频率太高，请手动去`配置`里调整`更新库存时，每处理完一个已下载的漫画后休息`");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
+                let _ = UpdateDownloadedComicsEvent::FailedComic {
+                    comic_id,
+                    comic_title: comic_title.clone(),
+                }
+                .emit(&app);
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
