@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use eyre::{eyre, OptionExt, WrapErr};
@@ -57,6 +58,37 @@ impl Comic {
         fields(comic_id = comic.id, comic_title = comic.name)
     )]
     pub fn from_comic_resp_data(app: &AppHandle, comic: GetComicRespData) -> eyre::Result<Comic> {
+        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
+        Self::from_comic_resp_data_with_map(app, comic, id_to_dir_map)
+    }
+
+    #[instrument(
+        level = "error",
+        skip_all,
+        fields(comic_id = comic.id, comic_title = comic.name)
+    )]
+    pub fn from_comic_resp_data_with_map(
+        _app: &AppHandle,
+        comic: GetComicRespData,
+        id_to_dir_map: Arc<HashMap<i64, PathBuf>>,
+    ) -> eyre::Result<Comic> {
+        let mut comic = Self::build_from_resp_data(comic);
+
+        // TODO: 这是为了兼容v0.15.4及之前的版本，后续需要移除，计划在v0.17.0之后移除
+        if let Some(comic_download_dir) = id_to_dir_map.get(&comic.id) {
+            comic
+                .create_chapter_metadata_for_old_version(comic_download_dir)
+                .wrap_err("为旧版本创建章节元数据失败")?;
+        }
+
+        comic.update_fields(&id_to_dir_map)?;
+
+        Ok(comic)
+    }
+
+    /// 从 `GetComicRespData` 构建 `Comic` 结构体（不含下载状态相关的字段填充），
+    /// `from_comic_resp_data` 与 `from_comic_resp_data_with_map` 共用此实现。
+    fn build_from_resp_data(comic: GetComicRespData) -> Comic {
         let mut chapter_infos: Vec<ChapterInfo> = comic
             .series
             .into_iter()
@@ -95,7 +127,7 @@ impl Comic {
             });
         }
 
-        let mut comic = Comic {
+        Comic {
             id: comic.id,
             name: comic.name,
             addtime: comic.addtime,
@@ -115,20 +147,7 @@ impl Comic {
             is_aids: comic.is_aids,
             is_downloaded: None,
             comic_download_dir: None,
-        };
-
-        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
-
-        // TODO: 这是为了兼容v0.15.4及之前的版本，后续需要移除，计划在v0.17.0之后移除
-        if let Some(comic_download_dir) = id_to_dir_map.get(&comic.id) {
-            comic
-                .create_chapter_metadata_for_old_version(comic_download_dir)
-                .wrap_err("为旧版本创建章节元数据失败")?;
         }
-
-        comic.update_fields(&id_to_dir_map)?;
-
-        Ok(comic)
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]

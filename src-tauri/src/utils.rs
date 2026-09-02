@@ -131,3 +131,18 @@ pub async fn get_comic(app: AppHandle, aid: i64) -> eyre::Result<Comic> {
 
     Ok(comic)
 }
+
+#[instrument(level = "error", skip_all)]
+pub async fn get_comic_with_map(
+    app: AppHandle,
+    aid: i64,
+    id_to_dir_map: Arc<HashMap<i64, PathBuf>>,
+) -> eyre::Result<Comic> {
+    let jm_client = app.get_jm_client();
+
+    let comic_resp_data = jm_client.get_comic(aid).await?;
+
+    let comic = Comic::from_comic_resp_data_with_map(&app, comic_resp_data, id_to_dir_map)?;
+
+    Ok(comic)
+}
