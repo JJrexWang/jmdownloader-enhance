@@ -113,14 +113,24 @@ onMounted(async () => {
     if (updateEvent.event === 'GetComicStart') {
       resetOverview()
       updateMessage = message.loading('正在获取已下载漫画的最新数据', { duration: 0 })
-    } else if (updateEvent.event === 'GetComicProgress' && updateMessage !== undefined) {
+    } else if (updateEvent.event === 'GetComicProgress') {
       const { current, total, currentComicTitle } = updateEvent.data
-      updateMessage.content = `正在获取已下载漫画的最新数据(${current}/${total})`
       if (overview.value.totalComics === 0) {
         overview.value.totalComics = total
       }
       overview.value.currentIndex = current - 1
       overview.value.currentComicTitle = currentComicTitle
+      // 第一次进入「逐本拉取阶段」就把 loading toast 换成 overview 卡片,
+      // 这样即便最终所有本都已最新/全部失败,卡片也至少闪一下,
+      // 用户能感知到确实跑了一轮而不是「点了按钮啥也没发生」。
+      if (updateMessage !== undefined) {
+        updateMessage.destroy()
+        updateMessage = undefined
+        openOverviewNotification()
+      } else if (overviewNotification === undefined) {
+        // 极端兜底:updateMessage 已经被前面的失败分支销毁,但 overview 还没开
+        openOverviewNotification()
+      }
     } else if (updateEvent.event === 'CreateDownloadTasksStart') {
       if (updateMessage !== undefined) {
         updateMessage.destroy()

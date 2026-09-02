@@ -113,14 +113,24 @@ onMounted(async () => {
     if (payload.event === 'GetFavoritesStart') {
       resetOverview()
       prepareMessage = message.loading('正在获取收藏夹', { duration: 0 })
-    } else if (payload.event === 'GetComicsProgress' && prepareMessage !== undefined) {
+    } else if (payload.event === 'GetComicsProgress') {
       const { current, total, currentComicTitle } = payload.data
-      prepareMessage.content = `正在获取收藏夹中的漫画(${current}/${total})`
       if (overview.value.totalComics === 0) {
         overview.value.totalComics = total
       }
       overview.value.currentIndex = current - 1
       overview.value.currentComicTitle = currentComicTitle
+      // 第一次进入「逐本拉取阶段」就把 loading toast 换成 overview 卡片,
+      // 这样即便最终所有本都已下完/全部失败,卡片也至少闪一下,
+      // 用户能感知到确实跑了一轮而不是「点了按钮啥也没发生」。
+      if (prepareMessage !== undefined) {
+        prepareMessage.destroy()
+        prepareMessage = undefined
+        openOverviewNotification()
+      } else if (overviewNotification === undefined) {
+        // 极端兜底:prepareMessage 已经被前面的失败分支销毁,但 overview 还没开
+        openOverviewNotification()
+      }
     } else if (payload.event === 'StartCreateDownloadTasks') {
       if (prepareMessage !== undefined) {
         prepareMessage.destroy()
