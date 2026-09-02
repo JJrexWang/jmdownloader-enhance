@@ -2,13 +2,74 @@
     <img src="https://github.com/user-attachments/assets/9d164ecc-e6ae-4e50-a497-b3ca79344ccf" style="align-self: center"/>
 </p>
 
-# 📚 禁漫天堂下载器
+# 📚 禁漫天堂下载器（个人增强版）
 
 一个用于 18comic.vip 禁漫天堂 jmcomic 18comic 的多线程下载器，带图形界面，带收藏夹，**免费下载收费的漫画**，下载速度飞快。图形界面基于[Tauri](https://v2.tauri.app/start/)
 
-🔽 在[Release页面](https://github.com/lanyeeee/jmcomic-downloader/releases)可以直接下载
+> 本仓库是从 [lanyeeee/jmcomic-downloader](https://github.com/lanyeeee/jmcomic-downloader) fork 的**个人增强版**。  
+> 在保留上游功能的基础上,加入了下文「[✨ 相对上游的增强](#-相对上游的增强)」一节里列出的功能。  
+> 上游 bugfix 仍会通过 `upstream/main` 同步合并进来。  
+> 编译好的 deb 包见 [Release 页面](https://github.com/JJrexWang/jmdownloader-enhance/releases)。
 
 **如果本项目对你有帮助，欢迎点个 Star⭐ 支持！你的支持是我持续更新维护的动力🙏**
+
+# ✨ 相对上游的增强
+
+## 🗜️ 章节归档(zip / cbz)
+
+下载章节时,可以把整个章节(图片 + 章节元数据 json)直接打包成 zip 或 cbz,大幅减少磁盘上散落的文件数量。
+
+- 在 `配置` → `下载` → `章节归档` 处可选 `不打包` / `.zip` / `.cbz`
+- 漫画目录下的章节子目录会被打包成单个压缩包,**章节元数据文件也一并打进压缩包**,所以「导出 CBZ / 导出 PDF」等功能依然能识别章节里的图片
+- 压缩包里**嵌入了 `chapterId`**,本地库扫描不会因为压缩包就漏识别
+- 适用场景:漫画一多、磁盘 inode 紧张、只想用阅读器看 `.cbz` 的用户
+
+## 🔤 中文归一化(简繁转换)
+
+禁漫对同一本漫画在不同登录语言下可能返回简体 / 繁体,导致落地目录被开成两个不同的文件夹。本增强把作者和漫画名在写入磁盘前用 OpenCC 做归一化:
+
+- `配置` → `下载` → `中文归一化` 处可选 `不转换` / `转为简体` / `转为繁体`
+- 只对**汉字**做转换,**日文假名 / 韩文 Hangul / 英文 / 数字 / 标点不会被连带改写**
+- 漫画内部识别仍然用 `comicId`,所以同一本漫画不会因为目录名归一化而误判为多本
+
+## 🛡️ 缺失图片容忍阈值
+
+上游行为是只要一张图没下到就整章作废。本增强加了一个阈值:
+
+- `配置` → `下载` → `缺失图片容忍`
+- 当某章节下载完成后,**缺失图片数 ≤ 阈值** 就视为下载成功(只在日志里告警),超过才作废
+- 阈值默认保留上游的严格行为,设为 `0` 即与上游一致
+- 失败 / 告警的章节会在日志里汇总(`chapter-download-warning` / `chapter-download-failure`),方便手动补图
+
+## 🔕 关闭错误通知弹窗
+
+下载量大 / 网络偶尔抽风时,ERROR 级弹窗会很烦人。
+
+- `配置` → `下载` → `关闭错误通知弹窗`
+- 启用后失败不再以右下角弹窗形式打扰,**实时日志与文件日志仍然会记录**
+- 事后从 `日志` 对话框或日志文件里排查
+
+## 🪟 下载收藏夹 / 更新库存的 overview 进度卡片
+
+把「每本漫画弹一张 loading toast」换成「整轮只持续展示一张通知卡」:
+
+- 卡片标题固定 `正在下载整个收藏夹` / `正在更新库存`
+- 正文实时刷新:
+  - `进度: 已处理/总数`
+  - `当前(i/N): <漫画标题>` ← 你能看到「现在在处理哪一本」
+  - `正在创建下载任务: x/y`(本内逐章节进度)
+  - 失败时显示 `失败 K 本(详见日志)` + 最近 5 个失败标题
+- 全部完成时弹一张成功 / 告警总结 toast,把整轮的失败标题展开列出
+
+## ⚡ 性能优化(应对大型本地库存)
+
+上游 `更新库存` 每处理一本漫画就要重建一次本地目录树 id→dir 映射,本地库存一多就慢到怀疑人生。本增强做了:
+
+- `id→dir` 映射**整轮只构建一次**,后台章节下载完成触发的 invalidate 也不会让本轮循环里反复重建
+- `进度页` 跨 pane 同步任务**只在目标 pane 已经加载过数据时才发**,避免无效广播
+- 多个 `id→dir` 调用命中**同一份缓存**,不再每次都全目录 walk
+
+实测:本地库存 1000+ 本时,「更新库存」从十几秒压缩到秒级;`进度页` 切换不再卡顿。
 
 # 🖥️ 图形界面
 
@@ -67,13 +128,13 @@ https://github.com/user-attachments/assets/46096bd9-1fde-4474-b297-0f4389dbe770
 #### 1. 克隆本仓库
 
 ```
-git clone https://github.com/lanyeeee/jmcomic-downloader.git
+git clone https://github.com/JJrexWang/jmdownloader-enhance.git
 ```
 
 #### 2.安装依赖
 
 ```
-cd jmcomic-downloader
+cd jmdownloader-enhance
 pnpm install
 ```
 
