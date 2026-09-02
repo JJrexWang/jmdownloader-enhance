@@ -43,6 +43,7 @@ impl PathIsImg for std::path::Path {
 pub trait WalkDirEntryExt {
     fn is_comic_metadata(&self) -> bool;
     fn is_chapter_metadata(&self) -> bool;
+    fn is_chapter_archive(&self) -> bool;
 }
 impl WalkDirEntryExt for walkdir::DirEntry {
     fn is_comic_metadata(&self) -> bool {
@@ -65,6 +66,17 @@ impl WalkDirEntryExt for walkdir::DirEntry {
         }
 
         true
+    }
+
+    fn is_chapter_archive(&self) -> bool {
+        if !self.file_type().is_file() {
+            return false;
+        }
+        let Some(ext) = self.path().extension().and_then(|s| s.to_str()) else {
+            return false;
+        };
+        // 忽略大小写匹配 .zip / .cbz
+        matches!(ext.to_ascii_lowercase().as_str(), "zip" | "cbz")
     }
 }
 

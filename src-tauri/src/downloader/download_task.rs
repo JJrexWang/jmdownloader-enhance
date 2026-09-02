@@ -18,6 +18,8 @@ use tokio::{
 use tracing::{instrument, Instrument};
 
 use crate::{
+    archive,
+    config::ChapterArchiveFormat,
     downloader::{
         download_img_task::{calculate_block_num, DownloadImgTask},
         download_task_state::DownloadTaskState,
@@ -213,10 +215,31 @@ impl DownloadTask {
             return;
         }
 
-        if let Err(err) = self.chapter_info.save_chapter_metadata() {
-            let err_title = "保存章节元数据失败";
-            let message = err.to_message();
-            tracing::error!(err_title, message);
+        // 如果配置了章节归档，则把章节目录（已包含 章节元数据.json 与所有图片）打包成压缩包，
+        // 然后删除原目录，并将漫画元数据中的章节路径更新为压缩包路径。
+        // 归档完成后章节元数据已经位于压缩包内部，因此不需要再调用 save_chapter_metadata。
+        let chapter_archive_format = self.app.get_config().read().chapter_archive_format;
+        let chapter_is_archived = if !matches!(chapter_archive_format, ChapterArchiveFormat::None) {
+            match self.pack_chapter_as_archive(chapter_archive_format) {
+                Ok(()) => true,
+                Err(err) => {
+                    let err_title = "打包章节归档失败";
+                    let message = err.to_message();
+                    tracing::error!(err_title, message);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+
+        // 非归档章节仍按原逻辑保存 章节元数据.json；归档章节元数据已在压缩包内，无需保存。
+        if !chapter_is_archived {
+            if let Err(err) = self.chapter_info.save_chapter_metadata() {
+                let err_title = "保存章节元数据失败";
+                let message = err.to_message();
+                tracing::error!(err_title, message);
+            }
         }
 
         // 章节落盘后失效已下载索引缓存，下次读取时重建
@@ -299,6 +322,50 @@ impl DownloadTask {
             temp_download_dir.display(),
             chapter_download_dir.display()
         ))?;
+
+        Ok(())
+    }
+
+    #[instrument(level = "error", skip_all, fields(format = ?format))]
+    fn pack_chapter_as_archive(&self, format: ChapterArchiveFormat) -> eyre::Result<()> {
+        let chapter_download_dir = self
+            .chapter_info
+            .chapter_download_dir
+            .as_ref()
+            .ok_or_eyre("`chapter_download_dir`字段为`None`")?
+            .clone();
+        let archive_path = archive::chapter_archive_path(&chapter_download_dir, format)
+            .wrap_err("计算章节归档路径失败")?;
+
+        // 1. 把章节目录（含 章节元数据.json 与所有图片）打包成压缩包
+        archive::pack_dir_as_archive(&chapter_download_dir, &archive_path, format)
+            .wrap_err("打包章节归档失败")?;
+
+        // 2. 删除原目录
+        std::fs::remove_dir_all(&chapter_download_dir).wrap_err(format!(
+            "删除`{}`失败",
+            chapter_download_dir.display()
+        ))?;
+
+        // 3. 更新漫画元数据中指向归档的字段并落盘
+        //    注意：self.comic 是 Arc<Comic>，这里克隆一份可变副本，
+        //    用于修改并保存；self.comic 自身的引用仍指向原 Comic，
+        //    但后续读取会从漫画元数据文件重新构建，因此不会受影响。
+        let mut owned = Arc::clone(&self.comic);
+        {
+            let comic_mut = Arc::make_mut(&mut owned);
+            if let Some(chapter) = comic_mut
+                .chapter_infos
+                .iter_mut()
+                .find(|c| c.chapter_id == self.chapter_info.chapter_id)
+            {
+                chapter.chapter_download_dir = Some(archive_path);
+                chapter.is_archived = true;
+            }
+            comic_mut
+                .save_comic_metadata()
+                .wrap_err("保存漫画元数据失败")?;
+        }
 
         Ok(())
     }

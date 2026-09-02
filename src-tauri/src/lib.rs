@@ -15,6 +15,7 @@ use crate::export::ComicExportLock;
 use crate::jm_client::JmClient;
 use crate::utils::DownloadedComicsIndex;
 
+mod archive;
 mod commands;
 mod config;
 mod downloader;
