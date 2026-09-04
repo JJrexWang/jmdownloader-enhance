@@ -48,6 +48,8 @@ jobs:
 
       - name: Build tauri app
         uses: tauri-apps/tauri-action@v0
+        with:
+          args: --bundles nsis
 
       - name: Create artifacts directory
         run: mkdir -p artifacts
@@ -98,6 +100,8 @@ jobs:
 
       - name: Build tauri app
         uses: tauri-apps/tauri-action@v0
+        with:
+          args: --bundles deb,rpm
 
       - name: Create artifacts directory
         run: mkdir -p artifacts
@@ -154,7 +158,7 @@ jobs:
       - name: Build tauri app
         uses: tauri-apps/tauri-action@v0
         with:
-          args: --target ${{ matrix.arch }}-apple-darwin
+          args: --target ${{ matrix.arch }}-apple-darwin --bundles dmg
 
       - name: Create artifacts directory
         run: mkdir -p artifacts
