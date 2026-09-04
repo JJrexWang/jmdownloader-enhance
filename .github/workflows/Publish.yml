@@ -207,8 +207,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           name: Desktop App v${{ needs.windows-build.outputs.VERSION }}
+          generate_release_notes: true
           body: |
-            Take a look at the assets to download and install this app.
+            ## 资产说明
+
+            - **Windows**: `*_windows_x64.exe` 为 NSIS 安装包；`*_windows_x64_portable.zip` 为免安装版
+            - **Linux**: `*_linux_amd64.deb` (Debian/Ubuntu)、`*_linux_amd64.rpm` (Fedora/openSUSE)、`*_linux_amd64_portable.tar.gz` (免安装版)
+            - **macOS**: `*_macos_aarch64.dmg` (Apple Silicon)、`*_macos_x86_64.dmg` (Intel)
+
+            上方为 GitHub 自动整理的提交记录；详细中文更新日志请查阅仓库 `CHANGELOG.md`。
           files: |
             artifacts/windows/*
             artifacts/linux/*
