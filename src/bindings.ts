@@ -305,7 +305,15 @@ chineseNormalization: ChineseNormalization;
 /**
  * 是否禁用 ERROR 级日志的 GUI 弹窗通知。启用后失败仍会写入实时日志与文件日志。
  */
-disableErrorNotifications: boolean }
+disableErrorNotifications: boolean; 
+/**
+ * 收藏页是否在已下载的本子上显示徽标。开启后会遍历所有已下载漫画，刷新时可能卡顿；本地漫画多（≥数百）建议保持关闭。
+ */
+favoriteShowDownloadedBadge: boolean; 
+/**
+ * 周刊页是否在已下载的本子上显示徽标。开启后会遍历所有已下载漫画，刷新时可能卡顿；本地漫画多（≥数百）建议保持关闭。
+ */
+weeklyShowDownloadedBadge: boolean }
 export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"
 export type ChineseNormalization = "None" | "ToSimplified" | "ToTraditional"
 export type ChapterArchiveFormat = "None" | "Zip" | "Cbz"

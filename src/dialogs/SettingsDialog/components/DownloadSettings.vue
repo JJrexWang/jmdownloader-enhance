@@ -212,5 +212,43 @@ watch([() => store.config?.apiDomainMode, () => store.config?.customApiDomain], 
         </div>
       </n-tooltip>
     </div>
+
+    <span class="font-bold mt-2">性能</span>
+    <div class="flex items-center gap-2 mt-2">
+      <n-tooltip placement="top" trigger="hover" :width="420">
+        <template #trigger>
+          <n-checkbox v-model:checked="store.config.favoriteShowDownloadedBadge">
+            收藏夹显示「已下载」徽标
+          </n-checkbox>
+        </template>
+        <div>
+          默认关闭。当本地库存较大（几百到上千本）时，开启后翻页/章节完成
+          会触发额外的 IPC 和 hashmap 匹配，可能导致收藏夹翻页卡顿。
+        </div>
+        <div class="text-gray-500 mt-1">
+          关闭后收藏夹卡片不再显示「✓ 已下载」徽标，但「本地库存」模块完全不受影响，
+          仍然能查询/管理已下载的漫画。
+        </div>
+        <div class="text-orange mt-1">
+          收藏夹里看不到「已下载」标记、但能正常用其他功能；遇到翻页卡顿时建议关闭。
+        </div>
+      </n-tooltip>
+    </div>
+    <div class="flex items-center gap-2 mt-2">
+      <n-tooltip placement="top" trigger="hover" :width="420">
+        <template #trigger>
+          <n-checkbox v-model:checked="store.config.weeklyShowDownloadedBadge">
+            每周必看显示「已下载」徽标
+          </n-checkbox>
+        </template>
+        <div>
+          默认关闭。逻辑与收藏夹一致：关闭后切分类/换页不再走 hashmap 匹配，
+          章节完成时也不会触发额外的 sync IPC。
+        </div>
+        <div class="text-gray-500 mt-1">
+          关闭后每周必看卡片不再显示「✓ 已下载」徽标，本地库存模块不受影响。
+        </div>
+      </n-tooltip>
+    </div>
   </div>
 </template>

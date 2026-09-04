@@ -57,10 +57,13 @@ onMounted(async () => {
           if (store.searchResult !== undefined) {
             await syncComicInSearch(progressData)
           }
-          if (store.getFavoriteResult !== undefined) {
+          // 收藏夹 / 每周必看的 sync 也受用户开关控制：关闭徽标后跳过，
+          // 避免每次章节完成都触发 4 个 IPC（搜索 + 收藏夹 + 每周必看 + 章节详情），
+          // 大库存下连锁起来会把 UI 主线程拖死。
+          if (store.config?.favoriteShowDownloadedBadge && store.getFavoriteResult !== undefined) {
             await syncComicInFavorite(progressData)
           }
-          if (store.getWeeklyResult !== undefined) {
+          if (store.config?.weeklyShowDownloadedBadge && store.getWeeklyResult !== undefined) {
             await syncComicInWeekly(progressData)
           }
         }

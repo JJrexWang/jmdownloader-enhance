@@ -50,6 +50,16 @@ pub struct Config {
     /// 启用后，下载/同步等过程中产生的失败不再右下角弹通知，但仍会写入实时日志
     /// 与文件日志，方便事后排查。
     pub disable_error_notifications: bool,
+    /// 收藏夹/每周必看是否在卡片上显示「已下载」徽标。
+    ///
+    /// 关闭后，Rust 端不会再为 `getFavorite` / `getWeekly` /
+    /// `getSyncedComicInFavorite` / `getSyncedComicInWeekly` 走 hashmap
+    /// 匹配（直接 is_downloaded=false），前端章节完成事件也不会再去
+    /// sync 这两个面板，从而避免大量本地库存（几百到上千本）下
+    /// 翻页/章节完成时的连锁 IPC 把 UI 卡死。
+    /// 需要看徽标可手动开启，关闭后仍然能在「本地库存」模块查询/管理已下载漫画。
+    pub favorite_show_downloaded_badge: bool,
+    pub weekly_show_downloaded_badge: bool,
 }
 
 impl Config {
@@ -149,6 +159,11 @@ impl Config {
             chinese_normalization: ChineseNormalization::ToSimplified,
             // 默认仍然弹 ERROR 通知；不喜欢打扰的用户可手动关闭
             disable_error_notifications: false,
+            // 默认不显示已下载徽标：本地库存大时翻页/章节完成事件会通过
+            // hashmap 匹配 + 前端 sync 触发大量 IPC 阻塞 UI 主线程。徽标
+            // 信息本来就在「本地库存」模块里有，所以默认关掉换取流畅。
+            favorite_show_downloaded_badge: false,
+            weekly_show_downloaded_badge: false,
         }
     }
 }

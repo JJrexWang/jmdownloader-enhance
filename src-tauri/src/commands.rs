@@ -817,14 +817,10 @@ pub fn get_synced_comic(app: AppHandle, mut comic: Comic) -> CommandResult<Comic
 #[instrument(level = "error", skip_all, fields(comic_id = comic.id, comic_title = comic.name))]
 pub fn get_synced_comic_in_favorite(
     app: AppHandle,
-    mut comic: ComicInFavorite,
+    comic: ComicInFavorite,
 ) -> CommandResult<ComicInFavorite> {
-    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
-        .map_err(|err| CommandError::from("同步ComicInFavorite字段失败", err))?;
-
-    comic.update_fields(&id_to_dir_map);
-
-    Ok(comic)
+    GetFavoriteResult::sync_one(&app, comic)
+        .map_err(|err| CommandError::from("同步ComicInFavorite字段失败", err))
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -849,14 +845,9 @@ pub fn get_synced_comic_in_search(
 #[instrument(level = "error", skip_all, fields(comic_id = comic.id, comic_title = comic.name))]
 pub fn get_synced_comic_in_weekly(
     app: AppHandle,
-    mut comic: ComicInWeekly,
+    comic: ComicInWeekly,
 ) -> CommandResult<ComicInWeekly> {
-    let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(&app)
-        .map_err(|err| CommandError::from("同步ComicInWeekly字段失败", err))?;
-
-    comic.update_fields(&id_to_dir_map);
-
-    Ok(comic)
+    Ok(GetWeeklyResult::sync_one(&app, comic))
 }
 
 #[allow(clippy::needless_pass_by_value)]
