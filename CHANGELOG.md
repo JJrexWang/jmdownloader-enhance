@@ -20,3 +20,7 @@
 - `src/dialogs/SettingsDialog/components/DownloadSettings.vue`：新增「性能」分类与两个 checkbox（含提示 tooltip）
 - `src/bindings.ts`：类型同步
 - 版本号 `0.18.0-enhance.10` → `0.18.0-enhance.11`
+
+## 自动化变更
+
+- `.github/workflows/Publish.yml`：把 `draft: true` 改成 `draft: false`，CI 跑完直接发布 release，不再需要人工确认

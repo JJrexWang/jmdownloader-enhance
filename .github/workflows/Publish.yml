@@ -225,5 +225,5 @@ jobs:
             artifacts/linux/*
             artifacts/macos-aarch64/*
             artifacts/macos-x86_64/*
-          draft: true
+          draft: false
           prerelease: false
