@@ -91,29 +91,30 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
-      # GHCR user-owned 包默认 private,需要手动 PATCH 改 public
-      # 才能让 docker compose pull / docker run 直接拉。
-      # 用 GitHub API: PATCH /user/packages/{package_type}/{package_name}
+      # GHCR user-owned 包默认 private,需要 PATCH 改 public 才能匿名 pull。
+      # 注意: /user/packages/... 是「当前认证用户」的 namespace;
+      # 但 GITHUB_TOKEN 对应的是 workflow bot,包实际属于 repo owner。
+      # 正确路径: PATCH /users/{owner}/packages/container/{package_name}
       - name: Set GHCR package visibility to public
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG_OWNER: ${{ github.repository_owner }}
           PKG_NAME: jmcomic-downloader-enhance
         run: |
-          # 包名在 user namespace 下是 lowercase 的 repo 名
-          # 第一次 push 时包可能还不存在(API 异步),加 -L 跟随 + 失败重试
-          for i in 1 2 3 4 5; do
+          # 包名是 repo 名小写;第一次 push 时 API 可能异步,失败重试
+          for i in 1 2 3 4 5 6 7 8; do
             HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/user/packages/container/$PKG_NAME \
+              "https://api.github.com/users/$PKG_OWNER/packages/container/$PKG_NAME" \
               -d '{"visibility":"public","private":false}')
             if [ "$HTTP" = "200" ]; then
-              echo "package set to public"
+              echo "OK: package set to public"
               break
             fi
-            echo "attempt $i: HTTP $HTTP, retrying..."
+            echo "attempt $i: HTTP $HTTP"
+            cat /tmp/resp.json | head -c 300
+            echo
             sleep 5
           done
-          cat /tmp/resp.json | head -c 200
-          echo
