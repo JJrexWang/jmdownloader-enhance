@@ -1,20 +1,22 @@
 # JMComic Downloader HTTP server —— 单机 docker compose 部署
 #
 # 用法：
-#   docker compose build            # 第一次/更新源码后构建
+#   docker compose pull             # 拉新镜像（可选）
 #   docker compose up -d            # 后台启动
-#   docker compose logs -f          # 看日志（stdout + 文件日志都在 /config/logs 下）
+#   docker compose logs -f          # 看日志（stdout + 文件日志也在 /config/logs 下）
 #   curl localhost:8080/health      # 验证
 #
-# 改默认端口/JM 账号密码：编辑下面 environment 块。
-# 改下载根目录：把 ./downloads 改成别的宿主路径；或在容器启动后改 /config/config.json 里的 downloadDir。
+# 镜像地址：ghcr.io/jjrexwang/jmdownloader-enhance:<tag>
+#   当前默认 tag = feat-http-server（feat/http-server 分支最新）
+#   后续 main 合并后会多：latest + <tauri 版本号>
+#
+# 改默认端口 / JM 账号密码：编辑下面 environment 块。
+# 改下载根目录：把 ./downloads 改成别的宿主路径；或在容器启动后改
+#   /config/config.json 里的 downloadDir。
 
 services:
   jmcomic-downloader:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: jmcomic-downloader:local
+    image: ghcr.io/jjrexwang/jmdownloader-enhance:feat-http-server
     container_name: jmcomic-downloader
     restart: unless-stopped
 
