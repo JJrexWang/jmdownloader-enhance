@@ -145,9 +145,16 @@ jobs:
             echo "PATCH result: HTTP $HTTP"
             cat /tmp/resp.json | head -c 400
             echo
+            # PATCH 200/204 算成功; 其它说明 GITHUB_TOKEN 没 admin,
+            # 引导用户去 web UI 一次性改 visibility,以后所有 build 自动 public
+            if [ "$HTTP" != "200" ] && [ "$HTTP" != "204" ]; then
+              echo "::error::PATCH visibility 失败 (HTTP $HTTP)。GITHUB_TOKEN 没有 admin 权限。"
+              echo "::error::请到 https://github.com/users/$PKG_OWNER/packages/container/$PKG_NAME/settings 手动把 Visibility 改成 Public,改完一次以后所有 build 都自动 public。"
+              exit 1
+            fi
           fi
 
-          # 不管 PATCH 成功与否,做一次匿名 pull 探活
+          # PATCH 成功后做一次匿名 pull 探活确认
           echo "--- anonymous pull probe ---"
           sleep 3
           OWNER_LC=$(echo $PKG_OWNER | tr '[:upper:]' '[:lower:]')
@@ -156,6 +163,13 @@ jobs:
           if [ -n "$T" ]; then
             LIST=$(curl -s -H "Authorization: Bearer $T" "https://ghcr.io/v2/$OWNER_LC/$PKG_NAME/tags/list")
             echo "anonymous tags/list: $LIST"
+            if echo "$LIST" | grep -q '"name"'; then
+              echo "anonymous pull OK ✓"
+            else
+              echo "::warning::anonymous pull token OK but tags/list returned: $LIST"
+            fi
           else
-            echo "anonymous pull still denied: $ANON"
+            echo "::error::anonymous pull still denied: $ANON"
+            echo "::error::请去 https://github.com/users/$PKG_OWNER/packages/container/$PKG_NAME/settings 手动改 Visibility 为 Public"
+            exit 1
           fi
