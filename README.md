@@ -198,8 +198,11 @@ docker pull ghcr.io/jjrexwang/jmdownloader-enhance:feat-http-server
                      # 想改路径，编辑 config.json 里的 downloadDir 即可
 ```
 
-容器以 uid `10001` 运行；首次启动会自动建好目录。如果宿主 `./config` 的属主不是 10001，
-可用 `chown -R 10001:10001 ./config ./downloads`，或者在 `docker-compose.yml` 里把 `user:` 改成 `"0:0"`（不推荐，但能用）。
+容器以非 root 用户 (uid `10001`) 运行；首次启动会自动建好目录。
+`docker-compose.yml` 里没设 `user:`，容器内 entrypoint 脚本 (`docker-entrypoint.sh`)
+会以 root 跑起来，自动把 `/config` 和 `/downloads` chown 到 `10001:10001`，
+再用 `gosu` 降权执行 server —— 宿主 `./config` 是不是 `root:root` 都不用管。
+（以前版本要手动 `chown -R 10001:10001 ./config ./downloads`，现在不用了。）
 
 ## 自定义构建 / 单镜像
 

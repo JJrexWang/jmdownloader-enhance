@@ -13,6 +13,11 @@
 # 改默认端口 / JM 账号密码：编辑下面 environment 块。
 # 改下载根目录：把 ./downloads 改成别的宿主路径；或在容器启动后改
 #   /config/config.json 里的 downloadDir。
+#
+# 关于挂载卷属主：容器内的 entrypoint 脚本会以 root 跑起来，
+# 自动把 /config /downloads chown 到容器内非 root 用户(uid 10001)，
+# 再用 gosu 降权执行 server。所以宿主机 ./config 是不是 root:root
+# 都无所谓，不用手动 chown，也不用再写 user: "0:0"。
 
 services:
   jmcomic-downloader:
@@ -38,10 +43,9 @@ services:
       # 日志级别：error / warn / info / debug / trace
       RUST_LOG: "info"
 
-    # 容器内只有一个非 root 用户（uid 10001）跑 server；卷默认属主匹配不上时
-    # compose 会把宿主卷改成 root:root，user 写不进去。可放开 user: "0:0"
-    # 强制 root，但日志/cookie 文件会变成 root 所有。
-    user: "10001:10001"
+    # 不设 user,让镜像里 ENTRYPOINT 的 docker-entrypoint.sh 以 root 跑
+    # (修复挂载卷属主),内部 gosu 降权到 jm(uid 10001)再 exec server。
+    # 容器内业务进程依然是非 root,比直接 user: "0:0" 安全。
 
     healthcheck:
       # 等容器起来后用 /health 探活
