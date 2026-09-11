@@ -75,7 +75,9 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          # 单架构先稳：arm64 用 QEMU 仿真极慢（>8 分钟 build + cache 协调
+          # 容易把 COPY 阶段卡掉）；后续稳定后单独跑 arm64 job 再合并 manifest。
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
