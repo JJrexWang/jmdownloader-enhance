@@ -90,6 +90,34 @@ impl JmClient {
         }
     }
 
+    /// 仅供单元测试用：构造一个不带 HTTP client 的实例。
+    /// 真正的网络调用会失败，但 trait dispatch / 类型构造可用。
+    ///
+    /// `app` 字段在测试中不会被使用（不会真的发请求），
+    /// 所以用 `MaybeUninit` 占位即可。
+    #[doc(hidden)]
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        let api_jar = Arc::new(Jar::default());
+        let api_client = reqwest_middleware::ClientBuilder::new(
+            reqwest::ClientBuilder::new()
+                .cookie_provider(api_jar.clone())
+                .build()
+                .unwrap(),
+        )
+        .build();
+        let img_client = reqwest_middleware::ClientBuilder::new(
+            reqwest::ClientBuilder::new().build().unwrap(),
+        )
+        .build();
+        Self {
+            app: unsafe { std::mem::MaybeUninit::zeroed().assume_init() },
+            api_client: Arc::new(RwLock::new(api_client)),
+            api_jar,
+            img_client: Arc::new(RwLock::new(img_client)),
+        }
+    }
+
     pub fn reload_client(&self) {
         let api_client = create_api_client(&self.app, &self.api_jar);
         *self.api_client.write() = api_client;

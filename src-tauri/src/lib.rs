@@ -101,17 +101,19 @@ pub fn run() {
         .setup(move |app| {
             builder.mount_events(app);
 
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .wrap_err("failed to get app data dir")?;
-
-            std::fs::create_dir_all(&app_data_dir).wrap_err(format!(
+            // 先建 AppPaths（包含 data_dir / logs_dir），Config 和下载目录都依赖它
+            let app_paths = service::AppPaths::from_app_handle(app.handle())?;
+            std::fs::create_dir_all(&app_paths.data_dir).wrap_err(format!(
                 "failed to create app data dir: {}",
-                app_data_dir.display()
+                app_paths.data_dir.display()
             ))?;
+            std::fs::create_dir_all(&app_paths.logs_dir).wrap_err(format!(
+                "failed to create logs dir: {}",
+                app_paths.logs_dir.display()
+            ))?;
+            app.manage(app_paths);
 
-            let config = RwLock::new(Config::new(app.handle())?);
+            let config = RwLock::new(Config::new(&app.state::<service::AppPaths>().data_dir)?);
             app.manage(config);
 
             let jm_client = JmClient::new(app.handle().clone());
@@ -122,13 +124,6 @@ pub fn run() {
 
             let export_lock = ComicExportLock::new();
             app.manage(export_lock);
-
-            let app_paths = service::AppPaths::from_app_handle(app.handle())?;
-            std::fs::create_dir_all(&app_paths.logs_dir).wrap_err(format!(
-                "failed to create logs dir: {}",
-                app_paths.logs_dir.display()
-            ))?;
-            app.manage(app_paths);
 
             let downloaded_comics_index = DownloadedComicsIndex::new();
             app.manage(downloaded_comics_index);

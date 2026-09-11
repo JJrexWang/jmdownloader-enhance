@@ -54,6 +54,20 @@ impl DownloadManager {
         manager
     }
 
+    /// 仅供单元测试用：构造一个没有 tauri runtime 的实例。
+    /// 不能真的下载，但字段结构完整，可以作为 trait getter 的返回类型。
+    #[doc(hidden)]
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        Self {
+            app: unsafe { std::mem::MaybeUninit::zeroed().assume_init() },
+            chapter_sem: Arc::new(Semaphore::new(1)),
+            img_sem: Arc::new(Semaphore::new(1)),
+            byte_per_sec: Arc::new(AtomicU64::new(0)),
+            download_tasks: RwLock::new(HashMap::new()),
+        }
+    }
+
     #[instrument(
         level = "error",
         skip_all,

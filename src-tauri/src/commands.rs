@@ -69,7 +69,7 @@ pub fn save_config(app: AppHandle, config: Config) -> CommandResult<()> {
         let mut config_state = ctx.config_mut();
         *config_state = config;
         config_state
-            .save(&app)
+            .save(ctx.paths().data_dir.as_path())
             .map_err(|err| CommandError::from("保存配置失败", err))?;
         tracing::debug!("保存配置成功");
     }

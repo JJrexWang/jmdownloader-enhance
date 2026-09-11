@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use crate::types::{DownloadFormat, ProxyMode};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
 
 const API_DOMAIN_1: &str = "www.cdnzack.cc";
 const API_DOMAIN_2: &str = "www.cdnhth.cc";
@@ -53,31 +52,32 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(app: &AppHandle) -> eyre::Result<Self> {
-        let app_data_dir = app.path().app_data_dir()?;
-        let config_path = app_data_dir.join("config.json");
+    /// 从 data_dir 加载（不存在就用 default 并落盘）。
+    /// data_dir 通常是 AppPaths::data_dir；
+    /// 桌面端 = app_data_dir，HTTP 端 = 配置挂载卷。
+    pub fn new(data_dir: &Path) -> eyre::Result<Self> {
+        let config_path = data_dir.join("config.json");
 
         let config = if config_path.exists() {
-            let config_string = std::fs::read_to_string(config_path)?;
+            let config_string = std::fs::read_to_string(&config_path)?;
             match serde_json::from_str(&config_string) {
                 // 如果能够直接解析为Config，则直接返回
                 Ok(config) => config,
                 // 否则，将默认配置与文件中已有的配置合并
                 // 以免新版本添加了新的配置项，用户升级到新版本后，所有配置项都被重置
-                Err(_) => Config::merge_config(&config_string, &app_data_dir),
+                Err(_) => Config::merge_config(&config_string, data_dir),
             }
         } else {
-            Config::default(&app_data_dir)
+            Config::default(data_dir)
         };
-        config.save(app)?;
+        config.save(data_dir)?;
         Ok(config)
     }
 
-    pub fn save(&self, app: &AppHandle) -> eyre::Result<()> {
-        let resource_dir = app.path().app_data_dir()?;
-        let config_path = resource_dir.join("config.json");
+    pub fn save(&self, data_dir: &Path) -> eyre::Result<()> {
+        let config_path = data_dir.join("config.json");
         let config_string = serde_json::to_string_pretty(self)?;
-        std::fs::write(config_path, config_string)?;
+        std::fs::write(&config_path, config_string)?;
         Ok(())
     }
 
@@ -114,7 +114,7 @@ impl Config {
         config
     }
 
-    fn default(app_data_dir: &Path) -> Config {
+    pub fn default(app_data_dir: &Path) -> Config {
         let cpu_core_num = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
             .unwrap_or(1);
