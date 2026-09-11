@@ -92,30 +92,62 @@ jobs:
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       # GHCR user-owned 包默认 private,需要 PATCH 改 public 才能匿名 pull。
-      # 注意: /user/packages/... 是「当前认证用户」的 namespace;
-      # 但 GITHUB_TOKEN 对应的是 workflow bot,包实际属于 repo owner。
-      # 正确路径: PATCH /users/{owner}/packages/container/{package_name}
+      # 包 owner 不一定是 github.repository_owner(GITHUB_TOKEN 是 bot),所以先
+      # 探测四个常见 namespace,把第一个 200 的拿来 PATCH。
       - name: Set GHCR package visibility to public
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PKG_OWNER: ${{ github.repository_owner }}
-          # 包名 = repo 名小写;由 bash 从 GITHUB_REPOSITORY 拆出
           PKG_NAME: ${{ github.event.repository.name }}
         run: |
-          # 包名是 repo 名小写;第一次 push 时 API 可能异步,失败重试
-          for i in 1 2 3 4 5 6 7 8; do
-            HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
+          # 探测这几种 owner namespace 找出包实际归属
+          CANDIDATES=(
+            "users/$PKG_OWNER"
+            "users/$(echo $PKG_OWNER | tr '[:upper:]' '[:lower:]')"
+            "orgs/$PKG_OWNER"
+            "user"           # 认证用户本身 = workflow bot 的 user namespace
+          )
+
+          FOUND=""
+          for ns in "${CANDIDATES[@]}"; do
+            HTTP=$(curl -s -o /tmp/probe.json -w "%{http_code}" \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/users/$PKG_OWNER/packages/container/$PKG_NAME" \
-              -d '{"visibility":"public","private":false}')
+              "https://api.github.com/$ns/packages/container/$PKG_NAME")
+            echo "probe $ns: HTTP $HTTP"
             if [ "$HTTP" = "200" ]; then
-              echo "OK: package set to public"
+              FOUND="$ns"
+              echo "FOUND at $ns"
+              cat /tmp/probe.json | python3 -c "import sys,json; d=json.load(sys.stdin); print('  visibility:', d.get('visibility','?')); print('  owner:', d.get('owner',{}).get('login','?'))"
               break
             fi
-            echo "attempt $i: HTTP $HTTP"
-            cat /tmp/resp.json | head -c 300
-            echo
-            sleep 5
           done
+
+          if [ -z "$FOUND" ]; then
+            echo "package not found in any namespace, skipping PATCH"
+            exit 0  # 不让 workflow 失败
+          fi
+
+          # PATCH 设 public
+          HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/$FOUND/packages/container/$PKG_NAME" \
+            -d '{"visibility":"public","private":false}')
+          echo "PATCH result: HTTP $HTTP"
+          cat /tmp/resp.json | head -c 400
+          echo
+
+          # 不管 PATCH 成功与否,做一次匿名 pull 探活
+          echo "--- anonymous pull probe ---"
+          sleep 3
+          OWNER_LC=$(echo $PKG_OWNER | tr '[:upper:]' '[:lower:]')
+          ANON=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:$OWNER_LC/$PKG_NAME:pull")
+          T=$(echo "$ANON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))")
+          if [ -n "$T" ]; then
+            LIST=$(curl -s -H "Authorization: Bearer $T" "https://ghcr.io/v2/$OWNER_LC/$PKG_NAME/tags/list")
+            echo "anonymous tags/list: $LIST"
+          else
+            echo "anonymous pull still denied: $ANON"
+          fi
