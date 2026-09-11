@@ -64,7 +64,9 @@ RUN apt-get update \
 WORKDIR /app
 
 # 从 builder 拷出 release 二进制
-COPY --from=builder /build/src-tauri/target/release/server /app/server
+# cargo 从 /build/src-tauri 跑,manifest 在 ./src-tauri/Cargo.toml,
+# 默认 target dir 跟着 manifest 走,所以二进制在 src-tauri 子目录下。
+COPY --from=builder /build/src-tauri/src-tauri/target/release/server /app/server
 
 # 数据目录：
 #   /config    —— 持久化配置、cookies、日志（推荐挂卷）
