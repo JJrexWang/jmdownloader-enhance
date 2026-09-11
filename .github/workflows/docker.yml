@@ -100,7 +100,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PKG_OWNER: ${{ github.repository_owner }}
-          PKG_NAME: jmcomic-downloader-enhance
+          # 包名 = repo 名(github.repository 去掉 owner 部分);
+          # Docker 会把所有字母 lowercase,所以也小写化
+          PKG_NAME: ${{ lower(substring(github.repository, indexOf(github.repository, '/') + 1)) }}
         run: |
           # 包名是 repo 名小写;第一次 push 时 API 可能异步,失败重试
           for i in 1 2 3 4 5 6 7 8; do
