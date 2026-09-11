@@ -15,21 +15,21 @@ use crate::utils::DownloadedComicsIndex;
 
 mod archive;
 mod commands;
-mod config;
-mod downloader;
+pub mod config;
+pub mod downloader;
 mod errors;
 mod events;
-mod export;
+pub mod export;
 mod extensions;
-mod jm_client;
-mod logger;
+pub mod jm_client;
+pub mod logger;
 mod responses;
-mod service;
+pub mod service;
 #[cfg(test)]
 mod test_ctx;
 mod text;
-mod types;
-mod utils;
+pub mod types;
+pub mod utils;
 
 fn generate_context() -> tauri::Context<Wry> {
     tauri::generate_context!()

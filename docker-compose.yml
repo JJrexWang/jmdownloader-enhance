@@ -1,0 +1,50 @@
+# JMComic Downloader HTTP server —— 单机 docker compose 部署
+#
+# 用法：
+#   docker compose build            # 第一次/更新源码后构建
+#   docker compose up -d            # 后台启动
+#   docker compose logs -f          # 看日志（stdout + 文件日志都在 /config/logs 下）
+#   curl localhost:8080/health      # 验证
+#
+# 改默认端口/JM 账号密码：编辑下面 environment 块。
+# 改下载根目录：把 ./downloads 改成别的宿主路径；或在容器启动后改 /config/config.json 里的 downloadDir。
+
+services:
+  jmcomic-downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jmcomic-downloader:local
+    container_name: jmcomic-downloader
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"   # 改 "0.0.0.0:9000:8080" 可换宿主端口
+
+    volumes:
+      # 持久化配置、cookies、日志
+      - ./config:/config
+      # 漫画下载根目录（容器里 Config.downloadDir 也建议改到这里）
+      - ./downloads:/downloads
+
+    environment:
+      # 监听端口（容器内；改宿主机侧用上面的 ports）
+      JM_PORT: "8080"
+      # 想启动时自动登录就填进去；不填也不影响，后续用 POST /login 也能登
+      JM_USERNAME: ""
+      JM_PASSWORD: ""
+      # 日志级别：error / warn / info / debug / trace
+      RUST_LOG: "info"
+
+    # 容器内只有一个非 root 用户（uid 10001）跑 server；卷默认属主匹配不上时
+    # compose 会把宿主卷改成 root:root，user 写不进去。可放开 user: "0:0"
+    # 强制 root，但日志/cookie 文件会变成 root 所有。
+    user: "10001:10001"
+
+    healthcheck:
+      # 等容器起来后用 /health 探活
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

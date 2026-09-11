@@ -112,6 +112,113 @@ https://github.com/user-attachments/assets/46096bd9-1fde-4474-b297-0f4389dbe770
 1. 根据下面的**如何构建(build)**，自行编译
 2. 希望你相信我的承诺，我承诺你在[Release页面](https://github.com/lanyeeee/jmcomic-downloader/releases)下载到的所有东西都是安全的。切勿轻信他人分享的文件，请**仅**在[Release页面](https://github.com/lanyeeee/jmcomic-downloader/releases)下载。任何不是从该页面下载的版本均可能**已被篡改**并**真的包含病毒**(而非误报)，包括但不限于`网盘`、`通过邮箱或社交软件分享`、`issue或discussion里的文件`、`其他fork(仓库)`、`其他网站`
 
+# 🐳 Docker 部署（HTTP server 模式）
+
+除了桌面端，本仓库已经把核心业务抽成 `Arc<dyn AppContext>`，因此同一份代码也能跑成
+**纯 HTTP 服务**，打成 Docker 镜像部署在 NAS / 服务器上，配合外部前端或脚本用。
+
+镜像只构建 `src/bin/server.rs`（不带 Tauri 运行时），约 60MB，启动后监听 `0.0.0.0:${JM_PORT:-8080}`，
+提供 axum REST + SSE（业务事件推送）端点。
+
+## 快速开始
+
+```bash
+# 1. 构建并后台启动
+docker compose up -d --build
+
+# 2. 验证
+curl http://localhost:8080/health
+# {"service":"jmcomic-downloader","status":"ok"}
+
+# 3. 看日志
+docker compose logs -f
+ls -lh config/logs/   # 文件日志也持久化在 config 卷里
+```
+
+## 关键端点
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/health` | 健康检查 |
+| GET | `/events` | SSE 业务事件流（下载进度 / 完成 / 失败） |
+| GET / POST | `/config` | 读 / 写 `Config`（含代理、下载目录、并发等） |
+| POST | `/login` | `{ "username", "password" }`，返回 user profile |
+| GET | `/user-profile` | 当前登录用户信息 |
+| POST | `/search` | `{ "keyword", "page", "sort" }` |
+| GET | `/comic/:id` | 单本漫画元信息 + 章节列表 |
+| POST | `/favorites` | `{ "folder_id", "page", "sort" }` |
+| GET | `/weekly-info` | 本周必看分类 |
+| POST | `/weekly` | `{ "category_id", "type_id" }` |
+| POST | `/download/task` / `/tasks` | 单章节 / 多章节下载 |
+| POST | `/download/pause` / `/resume` / `/delete` | 任务控制 |
+| POST | `/download/comic` | `{ "aid" }` 整本漫画入队 |
+| POST | `/download/all-favorites` | 一键下载所有收藏夹 |
+| POST | `/download/update-downloaded` | 重建本地已下载索引 |
+| POST | `/export/cbz` / `/pdf` / `/cbz/chapters` / `/pdf/chapters` | 导出整本或指定章节 |
+| GET | `/logs/size` | 文件日志大小 |
+
+详细 endpoint 实现见 `src-tauri/src/bin/server.rs`。
+
+## 环境变量
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `JM_PORT` | `8080` | 容器内监听端口（宿主机侧用 `docker-compose.yml` 里的 `ports`） |
+| `JM_CONFIG_DIR` | `/config` | 配置 / cookies / 日志根目录（持久化卷） |
+| `JM_DOWNLOADS_DIR` | `/downloads` | 仅作为建议；实际生效值是 `/config/config.json` 里的 `downloadDir` |
+| `JM_USERNAME` / `JM_PASSWORD` | 空 | 设置后启动时自动 `POST /login` |
+| `RUST_LOG` | `info` | 标准 tracing 语法：`debug,jmcomic_downloader_lib=trace` |
+
+## 卷 / 数据布局
+
+```
+./config/         <- 挂到容器 /config
+  ├── config.json    # 运行期配置（端口、代理、并发、downloadDir 等）
+  ├── cookies.json   # JM 登录态
+  └── logs/          # 滚动日志（按天分割）
+./downloads/      <- 挂到容器 /downloads
+                     # 漫画实际落盘目录
+                     # 想改路径，编辑 config.json 里的 downloadDir 即可
+```
+
+容器以 uid `10001` 运行；首次启动会自动建好目录。如果宿主 `./config` 的属主不是 10001，
+可用 `chown -R 10001:10001 ./config ./downloads`，或者在 `docker-compose.yml` 里把 `user:` 改成 `"0:0"`（不推荐，但能用）。
+
+## 自定义构建 / 单镜像
+
+```bash
+# 单镜像构建（不用 compose）
+docker build -t jmcomic-downloader:local .
+
+# 直接跑
+docker run -d --name jm-server   -p 8080:8080   -v $(pwd)/config:/config   -v $(pwd)/downloads:/downloads   -e RUST_LOG=info   jmcomic-downloader:local
+
+# 进入容器调试
+docker exec -it jm-server /bin/bash
+```
+
+## 调试示例：登录 + 搜本子 + 整本下载
+
+```bash
+# 1) 登录（可选，启动时设了 JM_USERNAME/JM_PASSWORD 会自动跑）
+curl -s -X POST http://localhost:8080/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"你的账号","password":"你的密码"}'
+
+# 2) 搜索
+curl -s -X POST http://localhost:8080/search \
+  -H 'Content-Type: application/json' \
+  -d '{"keyword":"原神","page":1,"sort":"Latest"}' | jq '.SearchResult.content[0:3]'
+
+# 3) 整本下载（拿本子 aid）
+curl -s -X POST http://localhost:8080/download/comic \
+  -H 'Content-Type: application/json' \
+  -d '{"aid":422866}'
+
+# 4) 订阅进度事件流
+curl -N http://localhost:8080/events
+```
+
 # 🛠️ 如何构建(build)
 
 构建非常简单，一共就3条命令  

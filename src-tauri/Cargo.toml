@@ -47,7 +47,7 @@ uuid = { version = "1.15.1", features = ["v4"] }
 zip = { version = "2.2.3", default-features = false }
 ferrous-opencc = { version = "0.4.0", default-features = false, features = ["s2t-conversion", "t2s-conversion"] }
 tracing = { version = "0.1.41" }
-tracing-subscriber = { version = "0.3.19", features = ["json", "time", "local-time"] }
+tracing-subscriber = { version = "0.3.19", features = ["json", "time", "local-time", "env-filter"] }
 tracing-appender = { version = "0.2.3" }
 tracing-error = { version = "0.2.1" }
 notify = { version = "8.0.0" }
@@ -55,8 +55,19 @@ strfmt = { version = "0.2.4" }
 walkdir = { version = "2.5.0" }
 indexmap = { version = "2.10.0" }
 
+# HTTP server (axum) — for the standalone `server` binary
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+async-stream = "0.3"
+futures = "0.3"
+
 [profile.release]
 strip = true
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"

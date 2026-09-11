@@ -24,7 +24,7 @@ use crate::{
         download_img_task::{calculate_block_num, DownloadImgTask},
         download_task_state::DownloadTaskState,
     },
-    events::{DownloadEvent, NamedEvent},
+    events::DownloadEvent,
     extensions::EyreReportToMessage,
     jm_client::IMAGE_DOMAIN,
     service::AppContext,

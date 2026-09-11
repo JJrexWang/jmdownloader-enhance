@@ -1,0 +1,31 @@
+# 排除与 server 镜像无关的所有内容
+.git
+.github
+.gitignore
+.vscode
+
+# 桌面端构建产物（镜像只构建 server）
+dist
+node_modules
+pnpm-lock.yaml
+package.json
+pnpm-workspace.yaml
+index.html
+src/
+public/
+tsconfig*.json
+vite.config.ts
+uno.config.ts
+eslint.config.js
+.prettierrc
+LICENSE
+README.md
+
+# 已有的 docker 产物，避免递归
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# cargo 缓存（builder 阶段会重新拉，复制进去只会浪费层）
+src-tauri/target
+src-tauri/Cargo.lock.bak

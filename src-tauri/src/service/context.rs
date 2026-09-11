@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+#[cfg(test)]
 use serde::Serialize;
 use tauri::Manager;
 

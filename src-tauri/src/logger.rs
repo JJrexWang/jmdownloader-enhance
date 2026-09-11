@@ -3,19 +3,19 @@ use std::sync::{Arc, OnceLock};
 
 use eyre::{OptionExt, WrapErr};
 use notify::{RecommendedWatcher, Watcher};
-use tracing::{instrument, Instrument, Level, Subscriber};
+use tracing::{instrument, Instrument, Subscriber};
 use tracing_appender::{
     non_blocking::WorkerGuard,
     rolling::{RollingFileAppender, Rotation},
 };
 use tracing_error::ErrorLayer;
 use tracing_subscriber::{
-    filter::{filter_fn, FilterExt, Targets},
+    filter::filter_fn,
     fmt::{format::JsonFields, layer, time::LocalTime, MakeWriter},
     layer::SubscriberExt,
     registry::LookupSpan,
     util::SubscriberInitExt,
-    Layer, Registry,
+    EnvFilter, Layer, Registry,
 };
 
 use crate::{
@@ -58,12 +58,16 @@ static GUARD: OnceLock<parking_lot::Mutex<Option<WorkerGuard>>> = OnceLock::new(
 
 #[instrument(level = "error", skip_all)]
 pub fn init(app: Arc<dyn crate::service::AppContext>) -> eyre::Result<()> {
+    // 全局 env filter（由 RUST_LOG 控制），未设置时退回到
+    // `info,jmcomic_downloader_lib=trace`——既安静又能在出问题时看清本 crate。
     let lib_module_path = module_path!();
-    let lib_target = lib_module_path.split("::").next().ok_or_eyre(format!(
-        "解析lib_target失败: lib_module_path={lib_module_path}"
-    ))?;
-    // 过滤掉来自其他库的日志
-    let target_filter = Targets::new().with_target(lib_target, Level::TRACE);
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"))
+        .add_directive(
+            format!("{lib_module_path}=trace")
+                .parse()
+                .expect("hardcoded directive parse"),
+        );
     // 输出到文件
     let (file_layer, guard) = create_file_layer(app.as_ref())?;
     let (reloadable_file_layer, reload_handle) = tracing_subscriber::reload::Layer::new(file_layer);
@@ -83,12 +87,12 @@ pub fn init(app: Arc<dyn crate::service::AppContext>) -> eyre::Result<()> {
         .with_line_number(true)
         .json()
         // 过滤掉来自这个文件的日志，避免无限递归
-        .with_filter(target_filter.clone().and(filter_fn(|metadata| {
+        .with_filter(filter_fn(|metadata| {
             metadata.module_path() != Some(lib_module_path)
-        })));
+        }));
 
     Registry::default()
-        .with(target_filter)
+        .with(env_filter)
         .with(reloadable_file_layer)
         .with(console_layer)
         .with(log_event_layer)
