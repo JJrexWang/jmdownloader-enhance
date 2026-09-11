@@ -8,7 +8,7 @@
 # 只构建 src/bin/server.rs（不打包 tauri 桌面运行时），镜像约 60MB。
 # ----------------------------------------------------------------------------
 
-FROM rust:1.83-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 
 # 编译期系统依赖：openssl-sys / pkg-config / zlib / ca-certificates
 RUN apt-get update \
