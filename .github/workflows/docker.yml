@@ -90,3 +90,30 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      # GHCR user-owned 包默认 private,需要手动 PATCH 改 public
+      # 才能让 docker compose pull / docker run 直接拉。
+      # 用 GitHub API: PATCH /user/packages/{package_type}/{package_name}
+      - name: Set GHCR package visibility to public
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG_NAME: jmcomic-downloader-enhance
+        run: |
+          # 包名在 user namespace 下是 lowercase 的 repo 名
+          # 第一次 push 时包可能还不存在(API 异步),加 -L 跟随 + 失败重试
+          for i in 1 2 3 4 5; do
+            HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/user/packages/container/$PKG_NAME \
+              -d '{"visibility":"public","private":false}')
+            if [ "$HTTP" = "200" ]; then
+              echo "package set to public"
+              break
+            fi
+            echo "attempt $i: HTTP $HTTP, retrying..."
+            sleep 5
+          done
+          cat /tmp/resp.json | head -c 200
+          echo
