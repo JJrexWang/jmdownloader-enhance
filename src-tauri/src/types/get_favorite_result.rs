@@ -3,7 +3,6 @@ use std::{collections::HashMap, path::PathBuf};
 use eyre::WrapErr;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
 use tracing::instrument;
 
 use crate::{
@@ -11,7 +10,7 @@ use crate::{
         CategoryRespData, CategorySubRespData, ComicInFavoriteRespData, FavoriteFolderRespData,
         GetFavoriteRespData,
     },
-    extensions::AppHandleExt,
+    service::AppContext,
 };
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -26,10 +25,10 @@ pub struct GetFavoriteResult {
 impl GetFavoriteResult {
     #[instrument(level = "error", skip_all)]
     pub fn from_resp_data(
-        app: &AppHandle,
+        ctx: &dyn AppContext,
         resp_data: GetFavoriteRespData,
     ) -> eyre::Result<GetFavoriteResult> {
-        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
+        let id_to_dir_map = ctx.downloaded_comics_index().get_or_build(ctx)?;
 
         let list = resp_data
             .list

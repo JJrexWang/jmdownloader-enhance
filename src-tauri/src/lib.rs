@@ -26,6 +26,7 @@ mod extensions;
 mod jm_client;
 mod logger;
 mod responses;
+mod service;
 mod text;
 mod types;
 mod utils;
@@ -121,6 +122,13 @@ pub fn run() {
 
             let export_lock = ComicExportLock::new();
             app.manage(export_lock);
+
+            let app_paths = service::AppPaths::from_app_handle(app.handle())?;
+            std::fs::create_dir_all(&app_paths.logs_dir).wrap_err(format!(
+                "failed to create logs dir: {}",
+                app_paths.logs_dir.display()
+            ))?;
+            app.manage(app_paths);
 
             let downloaded_comics_index = DownloadedComicsIndex::new();
             app.manage(downloaded_comics_index);

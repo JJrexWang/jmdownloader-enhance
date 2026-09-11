@@ -7,13 +7,13 @@ use std::{
 use eyre::{eyre, OptionExt, WrapErr};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
 use tracing::instrument;
 use walkdir::WalkDir;
 
 use crate::{
-    extensions::{AppHandleExt, EyreReportToMessage, WalkDirEntryExt},
+    extensions::{EyreReportToMessage, WalkDirEntryExt},
     responses::{GetComicRespData, RelatedListRespData},
+    service::AppContext,
 };
 
 use super::{ChapterInfo, DirFmtParams};
@@ -57,9 +57,9 @@ impl Comic {
         skip_all,
         fields(comic_id = comic.id, comic_title = comic.name)
     )]
-    pub fn from_comic_resp_data(app: &AppHandle, comic: GetComicRespData) -> eyre::Result<Comic> {
-        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
-        Self::from_comic_resp_data_with_map(app, comic, id_to_dir_map)
+    pub fn from_comic_resp_data(ctx: &dyn AppContext, comic: GetComicRespData) -> eyre::Result<Comic> {
+        let id_to_dir_map = ctx.downloaded_comics_index().get_or_build(ctx)?;
+        Self::from_comic_resp_data_with_map(ctx, comic, id_to_dir_map)
     }
 
     #[instrument(
@@ -68,7 +68,7 @@ impl Comic {
         fields(comic_id = comic.id, comic_title = comic.name)
     )]
     pub fn from_comic_resp_data_with_map(
-        app: &AppHandle,
+        ctx: &dyn AppContext,
         comic: GetComicRespData,
         id_to_dir_map: Arc<HashMap<i64, PathBuf>>,
     ) -> eyre::Result<Comic> {
@@ -81,8 +81,7 @@ impl Comic {
                 .wrap_err("为旧版本创建章节元数据失败")?;
         }
 
-        let config = app.get_config();
-        let config = config.read();
+        let config = ctx.config();
         let dir_fmt = config.dir_fmt.clone();
         let mode = config.chinese_normalization;
         comic.update_fields(&id_to_dir_map, &dir_fmt, mode)?;
@@ -222,10 +221,9 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]
-    pub fn get_comic_export_dir(&self, app: &AppHandle) -> eyre::Result<PathBuf> {
+    pub fn get_comic_export_dir(&self, ctx: &dyn AppContext) -> eyre::Result<PathBuf> {
         let (download_dir, export_dir) = {
-            let config = app.get_config();
-            let config = config.read();
+            let config = ctx.config();
             (config.download_dir.clone(), config.export_dir.clone())
         };
 
@@ -246,12 +244,12 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]
-    pub fn ensure_download_dir_fields(&mut self, app: &AppHandle) -> eyre::Result<()> {
+    pub fn ensure_download_dir_fields(&mut self, ctx: &dyn AppContext) -> eyre::Result<()> {
         if self.has_download_dir_fields() {
             return Ok(());
         }
 
-        self.update_download_dir_fields_by_fmt(app)
+        self.update_download_dir_fields_by_fmt(ctx)
     }
 
     pub fn has_download_dir_fields(&self) -> bool {
@@ -309,7 +307,7 @@ impl Comic {
     }
 
     #[instrument(level = "error", skip_all, fields(comic_id = self.id, comic_title = self.name))]
-    pub fn update_download_dir_fields_by_fmt(&mut self, app: &AppHandle) -> eyre::Result<()> {
+    pub fn update_download_dir_fields_by_fmt(&mut self, ctx: &dyn AppContext) -> eyre::Result<()> {
         if self.chapter_infos.is_empty() {
             return Err(eyre!("没有章节信息，无法更新下载目录字段"));
         }
@@ -330,7 +328,7 @@ impl Comic {
             };
 
             let chapter_download_dir =
-                ChapterInfo::get_chapter_download_dir_by_fmt(app, &dir_fmt_params)
+                ChapterInfo::get_chapter_download_dir_by_fmt(ctx, &dir_fmt_params)
                     .wrap_err(format!("章节`{chapter_title}`根据fmt获取章节下载目录失败"))?;
 
             if first_chapter_download_dir.is_none() {

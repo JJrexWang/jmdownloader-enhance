@@ -3,10 +3,9 @@ use std::{collections::HashMap, path::{Path, PathBuf}};
 use eyre::{eyre, OptionExt, WrapErr};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
 use tracing::instrument;
 
-use crate::{extensions::AppHandleExt, utils};
+use crate::{service::AppContext, utils};
 
 use super::Comic;
 
@@ -142,12 +141,11 @@ impl ChapterInfo {
         )
     )]
     pub fn get_chapter_download_dir_by_fmt(
-        app: &AppHandle,
+        ctx: &dyn AppContext,
         fmt_params: &DirFmtParams,
     ) -> eyre::Result<PathBuf> {
         let (download_dir, dir_fmt, mode) = {
-            let config = app.get_config();
-            let config = config.read();
+            let config = ctx.config();
             (
                 config.download_dir.clone(),
                 config.dir_fmt.clone(),

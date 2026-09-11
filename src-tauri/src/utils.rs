@@ -6,12 +6,12 @@ use std::{
 
 use eyre::{OptionExt, WrapErr};
 use parking_lot::RwLock;
-use tauri::AppHandle;
 use tracing::instrument;
 use walkdir::WalkDir;
 
 use crate::{
-    extensions::{AppHandleExt, WalkDirEntryExt},
+    extensions::WalkDirEntryExt,
+    service::AppContext,
     types::Comic,
 };
 
@@ -64,8 +64,8 @@ impl DownloadedComicsIndex {
         Self::default()
     }
 
-    pub fn get_or_build(&self, app: &AppHandle) -> eyre::Result<Arc<HashMap<i64, PathBuf>>> {
-        let download_dir = app.get_config().read().download_dir.clone();
+    pub fn get_or_build(&self, ctx: &dyn AppContext) -> eyre::Result<Arc<HashMap<i64, PathBuf>>> {
+        let download_dir = ctx.config().download_dir.clone();
 
         if let Some(cached) = self.inner.read().as_ref() {
             if cached.download_dir == download_dir {
@@ -122,27 +122,27 @@ fn build_id_to_dir_map(download_dir: &PathBuf) -> eyre::Result<HashMap<i64, Path
 }
 
 #[instrument(level = "error", skip_all)]
-pub async fn get_comic(app: AppHandle, aid: i64) -> eyre::Result<Comic> {
-    let jm_client = app.get_jm_client();
+pub async fn get_comic(ctx: &dyn AppContext, aid: i64) -> eyre::Result<Comic> {
+    let jm_client = ctx.jm_client();
 
     let comic_resp_data = jm_client.get_comic(aid).await?;
 
-    let comic = Comic::from_comic_resp_data(&app, comic_resp_data)?;
+    let comic = Comic::from_comic_resp_data(ctx, comic_resp_data)?;
 
     Ok(comic)
 }
 
 #[instrument(level = "error", skip_all)]
 pub async fn get_comic_with_map(
-    app: AppHandle,
+    ctx: &dyn AppContext,
     aid: i64,
     id_to_dir_map: Arc<HashMap<i64, PathBuf>>,
 ) -> eyre::Result<Comic> {
-    let jm_client = app.get_jm_client();
+    let jm_client = ctx.jm_client();
 
     let comic_resp_data = jm_client.get_comic(aid).await?;
 
-    let comic = Comic::from_comic_resp_data_with_map(&app, comic_resp_data, id_to_dir_map)?;
+    let comic = Comic::from_comic_resp_data_with_map(ctx, comic_resp_data, id_to_dir_map)?;
 
     Ok(comic)
 }

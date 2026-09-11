@@ -3,14 +3,13 @@ use std::{collections::HashMap, path::PathBuf};
 use eyre::WrapErr;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
 use tracing::instrument;
 
 use crate::{
     responses::{
         CategoryRespData, CategorySubRespData, ComicInSearchRespData, SearchResp, SearchRespData,
     },
-    extensions::AppHandleExt,
+    service::AppContext,
 };
 
 use super::Comic;
@@ -25,16 +24,16 @@ pub enum SearchResultVariant {
 
 impl SearchResultVariant {
     pub fn from_search_resp(
-        app: &AppHandle,
+        ctx: &dyn AppContext,
         search_resp: SearchResp,
     ) -> eyre::Result<SearchResultVariant> {
         match search_resp {
             SearchResp::SearchRespData(search_resp_data) => {
-                let search_result = SearchResult::from_resp_data(app, search_resp_data)?;
+                let search_result = SearchResult::from_resp_data(ctx, search_resp_data)?;
                 Ok(SearchResultVariant::SearchResult(search_result))
             }
             SearchResp::ComicRespData(get_comic_resp) => {
-                let comic = Comic::from_comic_resp_data(app, *get_comic_resp)?;
+                let comic = Comic::from_comic_resp_data(ctx, *get_comic_resp)?;
                 Ok(SearchResultVariant::Comic(Box::new(comic)))
             }
         }
@@ -52,10 +51,10 @@ pub struct SearchResult {
 impl SearchResult {
     #[instrument(level = "error", skip_all)]
     pub fn from_resp_data(
-        app: &AppHandle,
+        ctx: &dyn AppContext,
         search_resp_data: SearchRespData,
     ) -> eyre::Result<SearchResult> {
-        let id_to_dir_map = app.get_downloaded_comics_index().get_or_build(app)?;
+        let id_to_dir_map = ctx.downloaded_comics_index().get_or_build(ctx)?;
 
         let content = search_resp_data
             .content
