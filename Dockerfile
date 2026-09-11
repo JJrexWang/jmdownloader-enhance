@@ -10,13 +10,24 @@
 
 FROM rust:1.88-bookworm AS builder
 
-# 编译期系统依赖：openssl-sys / pkg-config / zlib / ca-certificates
+# 编译期系统依赖：
+#   libssl-dev / zlib1g-dev / pkg-config   —— openssl-sys
+#   libgtk-3-dev / libsoup-3.0-dev        —— tauri-runtime-wry -> gdk-sys / gtk-sys
+#   libwebkit2gtk-4.1-dev                 —— wry -> webkit2gtk-sys
+#   librsvg2-dev                          —— tauri icon 处理
+#   libayatana-appindicator3-dev          —— libappindicator-sys (libappindicator trait-dep)
+# runtime stage 用 debian-slim,不挂这些,镜像体积不变。
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         pkg-config \
         libssl-dev \
         zlib1g-dev \
         ca-certificates \
+        libgtk-3-dev \
+        libsoup-3.0-dev \
+        libwebkit2gtk-4.1-dev \
+        librsvg2-dev \
+        libayatana-appindicator3-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
