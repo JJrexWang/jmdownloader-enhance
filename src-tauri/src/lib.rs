@@ -1,7 +1,5 @@
-use events::{
-    DownloadAllFavoritesEvent, DownloadEvent, ExportCbzEvent, ExportPdfEvent, LogEvent,
-    UpdateDownloadedComicsEvent,
-};
+use std::sync::Arc;
+// events 仍在 lib.rs 通过 module 路径导出，但不再 derive tauri_specta::Event
 use eyre::WrapErr;
 use parking_lot::RwLock;
 use tauri::{Manager, Wry};
@@ -27,6 +25,8 @@ mod jm_client;
 mod logger;
 mod responses;
 mod service;
+#[cfg(test)]
+mod test_ctx;
 mod text;
 mod types;
 mod utils;
@@ -73,15 +73,9 @@ pub fn run() {
             get_synced_comic_in_search,
             get_synced_comic_in_weekly,
             open_log_file,
-        ])
-        .events(tauri_specta::collect_events![
-            DownloadEvent,
-            DownloadAllFavoritesEvent,
-            UpdateDownloadedComicsEvent,
-            ExportCbzEvent,
-            ExportPdfEvent,
-            LogEvent,
         ]);
+        // events 不再走 tauri-specta collect_events，由 AppContext::dispatch 统一管理
+        // (桌面端：转发给 tauri::Emitter；HTTP 端：推到 broadcast channel)；
 
     #[cfg(debug_assertions)]
     builder
@@ -116,10 +110,15 @@ pub fn run() {
             let config = RwLock::new(Config::new(&app.state::<service::AppPaths>().data_dir)?);
             app.manage(config);
 
-            let jm_client = JmClient::new(app.handle().clone());
+            // 构造一个共享的 `Arc<dyn AppContext>`：内部就是当前 AppHandle，
+            // 但走 trait object 路径让所有下游（JmClient / DownloadManager / logger）
+            // 都能透明换成 HTTP 适配器。
+            let ctx: Arc<dyn service::AppContext> = Arc::new(app.handle().clone());
+
+            let jm_client = JmClient::new(ctx.clone());
             app.manage(jm_client);
 
-            let download_manager = DownloadManager::new(app.handle());
+            let download_manager = DownloadManager::new(ctx.clone());
             app.manage(download_manager);
 
             let export_lock = ComicExportLock::new();
@@ -128,7 +127,7 @@ pub fn run() {
             let downloaded_comics_index = DownloadedComicsIndex::new();
             app.manage(downloaded_comics_index);
 
-            logger::init(app.handle())?;
+            logger::init(ctx.clone())?;
 
             Ok(())
         })

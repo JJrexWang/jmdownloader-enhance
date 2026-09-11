@@ -11,7 +11,6 @@ use eyre::WrapErr;
 use image::codecs::png;
 use image::codecs::png::PngEncoder;
 use image::{ImageFormat, RgbImage};
-use tauri::AppHandle;
 use tokio::{
     sync::{watch, SemaphorePermit},
     time::sleep,
@@ -20,13 +19,14 @@ use tracing::instrument;
 
 use crate::{
     downloader::{download_task::DownloadTask, download_task_state::DownloadTaskState},
-    extensions::{AppHandleExt, EyreReportToMessage},
+    extensions::EyreReportToMessage,
+    service::AppContext,
     types::DownloadFormat,
     utils,
 };
 
 pub struct DownloadImgTask {
-    app: AppHandle,
+    app: Arc<dyn AppContext>,
     download_task: Arc<DownloadTask>,
     url: String,
     index: usize,
@@ -107,7 +107,7 @@ impl DownloadImgTask {
         let url = &self.url;
 
         let index_filename = format!("{:04}", self.index + 1);
-        let download_format = self.app.get_config().read().download_format;
+        let download_format = self.app.config().download_format;
         let extension = download_format.extension();
 
         let user_format_path = self
@@ -128,7 +128,7 @@ impl DownloadImgTask {
 
         tracing::trace!("开始下载图片");
 
-        let (img_data, format) = match self.app.get_jm_client().get_img_data_and_format(url).await {
+        let (img_data, format) = match self.app.jm_client().get_img_data_and_format(url).await {
             Ok(data) => data,
             Err(err) => {
                 let err_title = "下载图片失败";
@@ -167,7 +167,7 @@ impl DownloadImgTask {
         tracing::trace!("图片成功保存到磁盘");
 
         self.app
-            .get_download_manager()
+            .download_manager()
             .byte_per_sec
             .fetch_add(img_data_len, Ordering::Relaxed);
 
@@ -177,7 +177,7 @@ impl DownloadImgTask {
 
         self.download_task.emit_download_task_update_event();
 
-        let img_download_interval_sec = self.app.get_config().read().img_download_interval_sec;
+        let img_download_interval_sec = self.app.config().img_download_interval_sec;
         sleep(Duration::from_secs(img_download_interval_sec)).await;
     }
 
@@ -192,8 +192,7 @@ impl DownloadImgTask {
             Some(permit) => Some(permit),
             None => match self
                 .app
-                .get_download_manager()
-                .inner()
+                .download_manager()
                 .img_sem
                 .acquire()
                 .await

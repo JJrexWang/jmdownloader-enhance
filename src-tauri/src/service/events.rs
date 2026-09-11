@@ -6,9 +6,9 @@
 // 这些名字就是当前 Tauri 版本里前端 `listen()` 用的名字。
 // 改名前务必同步前端代码。
 
-pub const DOWNLOAD: &str = "downloadEvent";
-pub const DOWNLOAD_ALL_FAVORITES: &str = "downloadAllFavoritesEvent";
-pub const UPDATE_DOWNLOADED_COMICS: &str = "updateDownloadedComicsEvent";
-pub const EXPORT_CBZ: &str = "exportCbzEvent";
-pub const EXPORT_PDF: &str = "exportPdfEvent";
-pub const LOG: &str = "logEvent";
+pub const DOWNLOAD: &str = "download-event";
+pub const DOWNLOAD_ALL_FAVORITES: &str = "download-all-favorites-event";
+pub const UPDATE_DOWNLOADED_COMICS: &str = "update-downloaded-comics-event";
+pub const EXPORT_CBZ: &str = "export-cbz-event";
+pub const EXPORT_PDF: &str = "export-pdf-event";
+pub const LOG: &str = "log-event";

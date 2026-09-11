@@ -9,21 +9,19 @@ use std::{
 
 use eyre::{eyre, WrapErr};
 use parking_lot::RwLock;
-use tauri::{AppHandle, Manager};
-use tauri_specta::Event;
+use crate::service::AppContext;
+use crate::events::DownloadEvent;
 use tokio::sync::Semaphore;
 use tracing::instrument;
 
 use crate::{
-    config::Config,
     downloader::{download_task::DownloadTask, download_task_state::DownloadTaskState},
-    events::DownloadEvent,
     extensions::EyreReportToMessage,
     types::Comic,
 };
 
 pub struct DownloadManager {
-    pub app: AppHandle,
+    pub app: Arc<dyn AppContext>,
     pub chapter_sem: Arc<Semaphore>,
     pub img_sem: Arc<Semaphore>,
     pub byte_per_sec: Arc<AtomicU64>,
@@ -31,10 +29,9 @@ pub struct DownloadManager {
 }
 
 impl DownloadManager {
-    pub fn new(app: &AppHandle) -> Self {
+    pub fn new(app: Arc<dyn AppContext>) -> Self {
         let (chapter_concurrency, img_concurrency) = {
-            let config = app.state::<RwLock<Config>>();
-            let config = config.read();
+            let config = app.config();
             (config.chapter_concurrency, config.img_concurrency)
         };
 
@@ -59,13 +56,10 @@ impl DownloadManager {
     #[doc(hidden)]
     #[cfg(test)]
     pub fn new_for_test() -> Self {
-        Self {
-            app: unsafe { std::mem::MaybeUninit::zeroed().assume_init() },
-            chapter_sem: Arc::new(Semaphore::new(1)),
-            img_sem: Arc::new(Semaphore::new(1)),
-            byte_per_sec: Arc::new(AtomicU64::new(0)),
-            download_tasks: RwLock::new(HashMap::new()),
-        }
+        Self::new({
+            use crate::test_ctx::TestCtx;
+            std::sync::Arc::new(TestCtx::default())
+        })
     }
 
     #[instrument(
@@ -76,7 +70,7 @@ impl DownloadManager {
     pub fn create_download_tasks(&self, mut comic: Comic, chapter_ids: &[i64]) {
         use DownloadTaskState::{Downloading, Paused, Pending};
 
-        if let Err(err) = comic.ensure_download_dir_fields(&self.app) {
+        if let Err(err) = comic.ensure_download_dir_fields(self.app.as_ref()) {
             let err_title = "批量创建下载任务失败";
             let message = err.to_message();
             tracing::error!(err_title, message);
@@ -125,7 +119,7 @@ impl DownloadManager {
         }
     }
 
-    async fn emit_download_speed_loop(app: AppHandle, byte_per_sec: Arc<AtomicU64>) {
+    async fn emit_download_speed_loop(app: Arc<dyn AppContext>, byte_per_sec: Arc<AtomicU64>) {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
 
         loop {
@@ -134,7 +128,7 @@ impl DownloadManager {
             #[allow(clippy::cast_precision_loss)]
             let mega_byte_per_sec = byte_per_sec as f64 / 1024.0 / 1024.0;
             let speed = format!("{mega_byte_per_sec:.2}MB/s");
-            let _ = DownloadEvent::Speed { speed }.emit(&app);
+            let _ = crate::events::dispatch_event(app.as_ref(), DownloadEvent::Speed { speed });
         }
     }
 

@@ -16,10 +16,10 @@ use reqwest_middleware::ClientWithMiddleware;
 use reqwest_retry::policies::ExponentialBackoff;
 use reqwest_retry::{Jitter, RetryTransientMiddleware};
 use serde_json::json;
-use tauri::AppHandle;
 use tracing::instrument;
 
-use crate::extensions::{AppHandleExt, EyreReportToMessage};
+use crate::extensions::EyreReportToMessage;
+use crate::service::AppContext;
 use crate::responses::{
     GetChapterRespData, GetComicRespData, GetFavoriteRespData, GetUserProfileRespData,
     GetWeeklyInfoRespData, GetWeeklyRespData, JmResp, RedirectRespData, SearchResp, SearchRespData,
@@ -67,19 +67,19 @@ impl ApiPath {
 
 #[derive(Clone)]
 pub struct JmClient {
-    app: AppHandle,
+    app: Arc<dyn AppContext>,
     api_client: Arc<RwLock<ClientWithMiddleware>>,
     api_jar: Arc<Jar>,
     img_client: Arc<RwLock<ClientWithMiddleware>>,
 }
 
 impl JmClient {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: Arc<dyn AppContext>) -> Self {
         let api_jar = Arc::new(Jar::default());
-        let api_client = create_api_client(&app, &api_jar);
+        let api_client = create_api_client(app.as_ref(), &api_jar);
         let api_client = Arc::new(RwLock::new(api_client));
 
-        let img_client = create_img_client(&app);
+        let img_client = create_img_client(app.as_ref());
         let img_client = Arc::new(RwLock::new(img_client));
 
         Self {
@@ -98,30 +98,14 @@ impl JmClient {
     #[doc(hidden)]
     #[cfg(test)]
     pub fn new_for_test() -> Self {
-        let api_jar = Arc::new(Jar::default());
-        let api_client = reqwest_middleware::ClientBuilder::new(
-            reqwest::ClientBuilder::new()
-                .cookie_provider(api_jar.clone())
-                .build()
-                .unwrap(),
-        )
-        .build();
-        let img_client = reqwest_middleware::ClientBuilder::new(
-            reqwest::ClientBuilder::new().build().unwrap(),
-        )
-        .build();
-        Self {
-            app: unsafe { std::mem::MaybeUninit::zeroed().assume_init() },
-            api_client: Arc::new(RwLock::new(api_client)),
-            api_jar,
-            img_client: Arc::new(RwLock::new(img_client)),
-        }
+        use crate::test_ctx::TestCtx;
+        Self::new(Arc::new(TestCtx::default()))
     }
 
     pub fn reload_client(&self) {
-        let api_client = create_api_client(&self.app, &self.api_jar);
+        let api_client = create_api_client(self.app.as_ref(), &self.api_jar);
         *self.api_client.write() = api_client;
-        let img_client = create_img_client(&self.app);
+        let img_client = create_img_client(self.app.as_ref());
         *self.img_client.write() = img_client;
     }
 
@@ -140,7 +124,7 @@ impl JmClient {
             utils::md5_hex(&format!("{ts}{APP_TOKEN_SECRET}"))
         };
 
-        let api_domain = self.app.get_config().read().get_api_domain();
+        let api_domain = self.app.config().get_api_domain();
         let path = path.as_str();
         let request = self
             .api_client
@@ -625,16 +609,15 @@ impl JmClient {
     }
 }
 
-pub fn create_api_client(app: &AppHandle, jar: &Arc<Jar>) -> ClientWithMiddleware {
+pub fn create_api_client(app: &dyn AppContext, jar: &Arc<Jar>) -> ClientWithMiddleware {
     let builder = reqwest::ClientBuilder::new().cookie_provider(jar.clone());
 
-    let proxy_mode = app.get_config().read().proxy_mode.clone();
+    let proxy_mode = app.config().proxy_mode.clone();
     let builder = match proxy_mode {
         ProxyMode::System => builder,
         ProxyMode::NoProxy => builder.no_proxy(),
         ProxyMode::Custom => {
-            let config = app.get_config();
-            let config = config.read();
+            let config = app.config();
             let proxy_host = &config.proxy_host;
             let proxy_port = &config.proxy_port;
             let proxy_url = format!("http://{proxy_host}:{proxy_port}");
@@ -661,16 +644,15 @@ pub fn create_api_client(app: &AppHandle, jar: &Arc<Jar>) -> ClientWithMiddlewar
         .build()
 }
 
-pub fn create_img_client(app: &AppHandle) -> ClientWithMiddleware {
+pub fn create_img_client(app: &dyn AppContext) -> ClientWithMiddleware {
     let builder = reqwest::ClientBuilder::new();
 
-    let proxy_mode = app.get_config().read().proxy_mode.clone();
+    let proxy_mode = app.config().proxy_mode.clone();
     let builder = match proxy_mode {
         ProxyMode::System => builder,
         ProxyMode::NoProxy => builder.no_proxy(),
         ProxyMode::Custom => {
-            let config = app.get_config();
-            let config = config.read();
+            let config = app.config();
             let proxy_host = &config.proxy_host;
             let proxy_port = &config.proxy_port;
             let proxy_url = format!("http://{proxy_host}:{proxy_port}");

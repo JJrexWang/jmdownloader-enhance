@@ -10,8 +10,6 @@ use std::{
 use parking_lot::Mutex;
 
 use eyre::{eyre, OptionExt, WrapErr};
-use tauri::AppHandle;
-use tauri_specta::Event;
 use tokio::{
     sync::{watch, SemaphorePermit},
     task::JoinSet,
@@ -26,14 +24,15 @@ use crate::{
         download_img_task::{calculate_block_num, DownloadImgTask},
         download_task_state::DownloadTaskState,
     },
-    events::DownloadEvent,
-    extensions::{AppHandleExt, EyreReportToMessage},
+    events::{DownloadEvent, NamedEvent},
+    extensions::EyreReportToMessage,
     jm_client::IMAGE_DOMAIN,
+    service::AppContext,
     types::{ChapterInfo, Comic},
 };
 
 pub struct DownloadTask {
-    pub app: AppHandle,
+    pub app: Arc<dyn AppContext>,
     pub comic: Arc<Comic>,
     pub chapter_info: Arc<ChapterInfo>,
     pub state_sender: watch::Sender<DownloadTaskState>,
@@ -54,9 +53,9 @@ impl DownloadTask {
             chapter_id = chapter_id
         )
     )]
-    pub fn new(app: AppHandle, mut comic: Comic, chapter_id: i64) -> eyre::Result<Arc<Self>> {
+    pub fn new(app: Arc<dyn AppContext>, mut comic: Comic, chapter_id: i64) -> eyre::Result<Arc<Self>> {
         comic
-            .ensure_download_dir_fields(&app)
+            .ensure_download_dir_fields(app.as_ref())
             .wrap_err("更新下载目录字段失败")?;
 
         let chapter_info = comic
@@ -155,7 +154,7 @@ impl DownloadTask {
             return;
         }
 
-        let should_download_cover = self.app.get_config().read().should_download_cover;
+        let should_download_cover = self.app.config().should_download_cover;
         if should_download_cover {
             if let Err(err) = self.download_cover().await {
                 let err_title = "下载封面失败";
@@ -206,7 +205,7 @@ impl DownloadTask {
         };
 
         if missing_count > 0 {
-            let threshold = self.app.get_config().read().missing_image_threshold;
+            let threshold = self.app.config().missing_image_threshold;
             let ctx = format!(
                 "comic_id={} comic_title={} chapter_id={} chapter_title={} order={} total={} downloaded={} missing={} missing_indexes={:?} threshold={}",
                 self.comic.id,
@@ -278,7 +277,7 @@ impl DownloadTask {
         // 如果配置了章节归档，则把章节目录（已包含 章节元数据.json 与所有图片）打包成压缩包，
         // 然后删除原目录，并将漫画元数据中的章节路径更新为压缩包路径。
         // 归档完成后章节元数据已经位于压缩包内部，因此不需要再调用 save_chapter_metadata。
-        let chapter_archive_format = self.app.get_config().read().chapter_archive_format;
+        let chapter_archive_format = self.app.config().chapter_archive_format;
         let chapter_is_archived = if !matches!(chapter_archive_format, ChapterArchiveFormat::None) {
             match self.pack_chapter_as_archive(chapter_archive_format) {
                 Ok(()) => true,
@@ -296,7 +295,7 @@ impl DownloadTask {
         let _ = chapter_is_archived;
 
         // 章节落盘后失效已下载索引缓存，下次读取时重建
-        self.app.get_downloaded_comics_index().invalidate();
+        self.app.downloaded_comics_index().invalidate();
 
         self.sleep_between_chapter().await;
         tracing::info!("章节下载成功");
@@ -314,7 +313,7 @@ impl DownloadTask {
 
         let (img_data, _format) = self
             .app
-            .get_jm_client()
+            .jm_client()
             .get_img_data_and_format(&url)
             .await
             .wrap_err(format!("下载图片`{url}`失败"))?;
@@ -429,7 +428,7 @@ impl DownloadTask {
 
     #[instrument(level = "error", skip_all)]
     async fn get_urls_with_block_num(&self, chapter_id: i64) -> Option<Vec<(String, u32)>> {
-        let jm_client = self.app.get_jm_client();
+        let jm_client = self.app.jm_client();
 
         let res = tokio::try_join!(
             jm_client.get_scramble_id(chapter_id),
@@ -486,7 +485,7 @@ impl DownloadTask {
             }
         };
 
-        let download_format = self.app.get_config().read().download_format;
+        let download_format = self.app.config().download_format;
         let extension = download_format.extension();
         for path in entries.filter_map(Result::ok).map(|entry| entry.path()) {
             let should_keep = path
@@ -517,8 +516,7 @@ impl DownloadTask {
             Some(permit) => Some(permit),
             None => match self
                 .app
-                .get_download_manager()
-                .inner()
+                .download_manager()
                 .chapter_sem
                 .acquire()
                 .await
@@ -580,7 +578,9 @@ impl DownloadTask {
     async fn handle_delete_receiver_change<'a>(&'a self, permit: &mut Option<SemaphorePermit<'a>>) {
         let chapter_id = self.chapter_info.chapter_id;
 
-        let _ = DownloadEvent::TaskDelete { chapter_id }.emit(&self.app);
+        let _ = crate::events::dispatch_event(self.app.as_ref(), DownloadEvent::TaskDelete {
+            chapter_id,
+        });
 
         if permit.is_some() {
             sleep(Duration::from_millis(100)).await;
@@ -591,13 +591,12 @@ impl DownloadTask {
 
     #[instrument(level = "error", skip_all)]
     async fn sleep_between_chapter(&self) {
-        let mut remaining_sec = self.app.get_config().read().chapter_download_interval_sec;
+        let mut remaining_sec = self.app.config().chapter_download_interval_sec;
         while remaining_sec > 0 {
-            let _ = DownloadEvent::Sleeping {
+            let _ = crate::events::dispatch_event(self.app.as_ref(), DownloadEvent::Sleeping {
                 chapter_id: self.chapter_info.chapter_id,
                 remaining_sec,
-            }
-            .emit(&self.app);
+            });
             sleep(Duration::from_secs(1)).await;
             remaining_sec -= 1;
         }
@@ -623,23 +622,21 @@ impl DownloadTask {
     }
 
     pub fn emit_download_task_update_event(&self) {
-        let _ = DownloadEvent::TaskUpdate {
+        let _ = crate::events::dispatch_event(self.app.as_ref(), DownloadEvent::TaskUpdate {
             chapter_id: self.chapter_info.chapter_id,
             state: *self.state_sender.borrow(),
             downloaded_img_count: self.downloaded_img_count.load(Ordering::Relaxed),
             total_img_count: self.total_img_count.load(Ordering::Relaxed),
-        }
-        .emit(&self.app);
+        });
     }
 
     fn emit_download_task_create_event(&self) {
-        let _ = DownloadEvent::TaskCreate {
+        let _ = crate::events::dispatch_event(self.app.as_ref(), DownloadEvent::TaskCreate {
             state: *self.state_sender.borrow(),
             comic: Box::new(self.comic.as_ref().clone()),
             chapter_info: Box::new(self.chapter_info.as_ref().clone()),
             downloaded_img_count: self.downloaded_img_count.load(Ordering::Relaxed),
             total_img_count: self.total_img_count.load(Ordering::Relaxed),
-        }
-        .emit(&self.app);
+        });
     }
 }

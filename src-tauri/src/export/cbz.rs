@@ -6,8 +6,6 @@ use std::{
 
 use eyre::{eyre, OptionExt, WrapErr};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use tauri::AppHandle;
-use tauri_specta::Event;
 use tracing::instrument;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -18,34 +16,36 @@ use crate::{
         get_downloaded_chapters, get_downloaded_chapters_by_ids,
         get_image_paths_with_archive_support, ComicExportLockGuard, ExportFormat,
     },
-    extensions::{AppHandleExt, EyreReportToMessage},
+    extensions::EyreReportToMessage,
+    service::AppContext,
     types::{ChapterInfo, Comic, ComicInfo},
 };
 
-struct CbzErrorEventGuard {
+struct CbzErrorEventGuard<'a> {
     uuid: String,
-    app: AppHandle,
+    app: &'a dyn AppContext,
     success: bool,
 }
 
-impl Drop for CbzErrorEventGuard {
+impl Drop for CbzErrorEventGuard<'_> {
     fn drop(&mut self) {
         if self.success {
             return;
         }
 
-        let uuid = self.uuid.clone();
-        let _ = ExportCbzEvent::Error { uuid }.emit(&self.app);
+        let _ = crate::events::dispatch_event(self.app, ExportCbzEvent::Error {
+            uuid: self.uuid.clone(),
+        });
     }
 }
 
 #[allow(clippy::cast_possible_wrap)]
 #[allow(clippy::cast_possible_truncation)]
 #[instrument(level = "error", skip_all, fields(comic_id = comic.id, comic_title = comic.name))]
-pub fn cbz(app: &AppHandle, comic: &Comic) -> eyre::Result<()> {
+pub fn cbz(app: &dyn AppContext, comic: &Comic) -> eyre::Result<()> {
     let comic_id = comic.id;
     let comic_title = &comic.name;
-    let export_lock = app.get_export_lock().inner().clone();
+    let export_lock = app.export_lock().clone();
 
     if !export_lock.try_acquire(comic_id) {
         return Err(eyre!("漫画`{comic_title}`正在导出，请稍后再试"));
@@ -56,7 +56,7 @@ pub fn cbz(app: &AppHandle, comic: &Comic) -> eyre::Result<()> {
         comic_id,
     };
 
-    let skip_mode = app.get_config().read().export_skip_mode;
+    let skip_mode = app.config().export_skip_mode;
     let downloaded_chapters = get_downloaded_chapters(&comic.chapter_infos);
 
     cbz_internal(app, comic, downloaded_chapters, skip_mode)
@@ -65,10 +65,10 @@ pub fn cbz(app: &AppHandle, comic: &Comic) -> eyre::Result<()> {
 #[allow(clippy::cast_possible_wrap)]
 #[allow(clippy::cast_possible_truncation)]
 #[instrument(level = "error", skip_all, fields(comic_id = comic.id, comic_title = comic.name))]
-pub fn cbz_chapters(app: &AppHandle, comic: &Comic, chapter_ids: Vec<i64>) -> eyre::Result<()> {
+pub fn cbz_chapters(app: &dyn AppContext, comic: &Comic, chapter_ids: Vec<i64>) -> eyre::Result<()> {
     let comic_id = comic.id;
     let comic_title = &comic.name;
-    let export_lock = app.get_export_lock().inner().clone();
+    let export_lock = app.export_lock().clone();
 
     if !export_lock.try_acquire(comic_id) {
         return Err(eyre!("漫画`{comic_title}`正在导出，请稍后再试"));
@@ -88,7 +88,7 @@ pub fn cbz_chapters(app: &AppHandle, comic: &Comic, chapter_ids: Vec<i64>) -> ey
 #[allow(clippy::too_many_lines)]
 #[instrument(level = "error", skip_all, fields(skip_mode = ?skip_mode))]
 fn cbz_internal(
-    app: &AppHandle,
+    app: &dyn AppContext,
     comic: &Comic,
     downloaded_chapters: Vec<ChapterInfo>,
     skip_mode: ExportSkipMode,
@@ -100,16 +100,15 @@ fn cbz_internal(
     };
     let event_uuid = uuid::Uuid::new_v4().to_string();
     // 发送开始导出cbz事件
-    let _ = ExportCbzEvent::Start {
+    let _ = crate::events::dispatch_event(app, ExportCbzEvent::Start {
         uuid: event_uuid.clone(),
         comic_title: comic.name.clone(),
         total: downloaded_chapters.len() as u32,
-    }
-    .emit(app);
+    });
     // 如果success为false，drop时发送Error事件
     let mut error_event_guard = CbzErrorEventGuard {
         uuid: event_uuid.clone(),
-        app: app.clone(),
+        app: app,
         success: false,
     };
     // 用来记录导出进度
@@ -175,11 +174,10 @@ fn cbz_internal(
         if should_skip {
             // 更新进度
             let current = current.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            let _ = ExportCbzEvent::Progress {
+            let _ = crate::events::dispatch_event(app, ExportCbzEvent::Progress {
                 uuid: event_uuid.clone(),
                 current,
-            }
-            .emit(app);
+            });
             return Ok(());
         }
 
@@ -244,23 +242,21 @@ fn cbz_internal(
         // 更新导出cbz的进度
         let current = current.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         // 发送导出cbz进度事件
-        let _ = ExportCbzEvent::Progress {
+        let _ = crate::events::dispatch_event(app, ExportCbzEvent::Progress {
             uuid: event_uuid.clone(),
             current,
-        }
-        .emit(app);
+        });
 
         Ok(())
     })?;
     // 标记为成功，后面drop时就不会发送Error事件
     error_event_guard.success = true;
     // 发送导出cbz完成事件
-    let _ = ExportCbzEvent::End {
+    let _ = crate::events::dispatch_event(app, ExportCbzEvent::End {
         uuid: event_uuid,
         comic_id: comic.id,
         chapter_export_dir: cbz_export_dir,
-    }
-    .emit(app);
+    });
 
     Ok(())
 }

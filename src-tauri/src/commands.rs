@@ -18,9 +18,10 @@ use walkdir::WalkDir;
 
 use crate::config::Config;
 use crate::errors::{CommandError, CommandResult};
-use crate::events::{DownloadAllFavoritesEvent, UpdateDownloadedComicsEvent};
+use crate::events::{
+    dispatch_event, DownloadAllFavoritesEvent, UpdateDownloadedComicsEvent,
+};
 use crate::extensions::{EyreReportToMessage, WalkDirEntryExt};
-use crate::service::events as evt;
 use crate::service::AppContext;
 use crate::responses::{GetUserProfileRespData, GetWeeklyInfoRespData};
 use crate::types::{
@@ -364,7 +365,7 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
 
     let mut favorite_comics = Vec::new();
     // 发送正在获取收藏夹事件
-    let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::GetFavoritesStart);
+    let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::GetFavoritesStart);
     // 获取收藏夹第一页
     let first_page = jm_client
         .get_favorite_folder(0, 1, FavoriteSort::FavoriteTime)
@@ -415,7 +416,7 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
                 let err_title = format!("下载收藏夹过程中，获取漫画`{comic_title}`失败，已跳过");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
-                let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::FailedComic {
+                let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::FailedComic {
                     comic_id: None,
                     comic_title: comic_title.clone(),
                 });
@@ -431,7 +432,7 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
                 let err = err.wrap_err("可能是频率太高，请手动去`配置`里调整`下载整个收藏夹时，每处理完一个收藏夹中的漫画后休息`");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
-                let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::FailedComic {
+                let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::FailedComic {
                     comic_id: Some(comic_id),
                     comic_title: comic_title.clone(),
                 });
@@ -441,7 +442,7 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
         };
 
         let current = (i + 1) as i64;
-        let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::GetComicsProgress {
+        let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::GetComicsProgress {
             current,
             total,
             current_comic_title: comic.name.clone(),
@@ -459,7 +460,7 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
             continue;
         }
 
-        let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::StartCreateDownloadTasks {
+        let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::StartCreateDownloadTasks {
             comic_id: comic.id,
             comic_title: comic.name.clone(),
             current: 0,
@@ -470,7 +471,7 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
             let current = current as i64 + 1;
             let _ = download_manager.create_download_task(comic.clone(), chapter_info.chapter_id);
 
-            let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::CreatingDownloadTask {
+            let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::CreatingDownloadTask {
                 comic_id: comic.id,
                 current,
             });
@@ -478,12 +479,12 @@ pub async fn download_all_favorites(app: AppHandle) -> CommandResult<()> {
             sleep(Duration::from_millis(100)).await;
         }
 
-        let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::EndCreateDownloadTasks { comic_id: comic.id });
+        let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::EndCreateDownloadTasks { comic_id: comic.id });
 
         sleep(Duration::from_secs(interval_sec)).await;
     }
     // 至此，所有收藏夹漫画的下载任务已经全部创建完毕
-    let _ = app.dispatch(evt::DOWNLOAD_ALL_FAVORITES, DownloadAllFavoritesEvent::GetComicsEnd);
+    let _ = dispatch_event(ctx, DownloadAllFavoritesEvent::GetComicsEnd);
 
     Ok(())
 
@@ -503,7 +504,7 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
 
     let total = downloaded_comics.len() as i64;
     let interval_sec = config.update_downloaded_comics_interval_sec;
-    let _ = app.dispatch(evt::UPDATE_DOWNLOADED_COMICS, UpdateDownloadedComicsEvent::GetComicStart { total });
+    let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::GetComicStart { total });
 
     // 一次性构建已下载漫画 id -> 目录 的映射，避免每个漫画都触发一次全目录 walk。
     // 后台章节下载完成触发的 invalidate 只会让本次循环结束后失效，下一次调用会重建。
@@ -521,7 +522,7 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
         let comic_title = downloaded_comic.name.clone();
         let comic_id = downloaded_comic.id;
         let current = (i + 1) as i64;
-        let _ = app.dispatch(evt::UPDATE_DOWNLOADED_COMICS, UpdateDownloadedComicsEvent::GetComicProgress {
+        let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::GetComicProgress {
             current,
             total,
             current_comic_title: comic_title.clone(),
@@ -537,7 +538,7 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
                 let err = err.wrap_err("可能是频率太高，请手动去`配置`里调整`更新库存时，每处理完一个已下载的漫画后休息`");
                 let message = err.to_message();
                 tracing::error!(err_title, message);
-                let _ = app.dispatch(evt::UPDATE_DOWNLOADED_COMICS, UpdateDownloadedComicsEvent::FailedComic {
+                let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::FailedComic {
                     comic_id,
                     comic_title: comic_title.clone(),
                 });
@@ -568,7 +569,7 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
             continue;
         }
 
-        let _ = app.dispatch(evt::UPDATE_DOWNLOADED_COMICS, UpdateDownloadedComicsEvent::CreateDownloadTasksStart {
+        let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::CreateDownloadTasksStart {
             comic_id: comic.id,
             comic_title: comic.name.clone(),
             current: 0,
@@ -581,7 +582,7 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
 
             let _ = download_manager.create_download_task(comic.clone(), chapter_id);
 
-            let _ = app.dispatch(evt::UPDATE_DOWNLOADED_COMICS, UpdateDownloadedComicsEvent::CreateDownloadTaskProgress {
+            let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::CreateDownloadTaskProgress {
                 comic_id: comic.id,
                 current,
             });
@@ -590,12 +591,12 @@ pub async fn update_downloaded_comics(app: AppHandle) -> CommandResult<()> {
         }
 
         let _ =
-            app.dispatch(evt::UPDATE_DOWNLOADED_COMICS, UpdateDownloadedComicsEvent::CreateDownloadTasksEnd { comic_id: comic.id });
+            dispatch_event(ctx, UpdateDownloadedComicsEvent::CreateDownloadTasksEnd { comic_id: comic.id });
 
         sleep(Duration::from_secs(interval_sec)).await;
     }
 
-    let _ = app.dispatch(evt::UPDATE_DOWNLOADED_COMICS, UpdateDownloadedComicsEvent::GetComicEnd);
+    let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::GetComicEnd);
 
     Ok(())
 

@@ -1,9 +1,8 @@
-use std::{io::Write, sync::OnceLock};
+use std::io::Write;
+use std::sync::{Arc, OnceLock};
 
 use eyre::{OptionExt, WrapErr};
 use notify::{RecommendedWatcher, Watcher};
-use tauri::{AppHandle, Manager};
-use tauri_specta::Event;
 use tracing::{instrument, Instrument, Level, Subscriber};
 use tracing_appender::{
     non_blocking::WorkerGuard,
@@ -21,17 +20,17 @@ use tracing_subscriber::{
 
 use crate::{
     events::LogEvent,
-    extensions::{AppHandleExt, EyreReportToMessage},
+    extensions::EyreReportToMessage,
 };
 
 struct LogEventWriter {
-    app: AppHandle,
+    app: Arc<dyn crate::service::AppContext>,
 }
 
 impl Write for LogEventWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let json_raw = String::from_utf8_lossy(buf).to_string();
-        let _ = LogEvent { json_raw }.emit(&self.app);
+        let _ = crate::events::dispatch_event(self.app.as_ref(), LogEvent { json_raw });
         Ok(buf.len())
     }
 
@@ -41,7 +40,7 @@ impl Write for LogEventWriter {
 }
 
 struct LogEventWriterFactory {
-    app: AppHandle,
+    app: Arc<dyn crate::service::AppContext>,
 }
 
 impl MakeWriter<'_> for LogEventWriterFactory {
@@ -58,7 +57,7 @@ static RELOAD_FN: OnceLock<Box<dyn Fn() -> eyre::Result<()> + Send + Sync>> = On
 static GUARD: OnceLock<parking_lot::Mutex<Option<WorkerGuard>>> = OnceLock::new();
 
 #[instrument(level = "error", skip_all)]
-pub fn init(app: &AppHandle) -> eyre::Result<()> {
+pub fn init(app: Arc<dyn crate::service::AppContext>) -> eyre::Result<()> {
     let lib_module_path = module_path!();
     let lib_target = lib_module_path.split("::").next().ok_or_eyre(format!(
         "解析lib_target失败: lib_module_path={lib_module_path}"
@@ -66,7 +65,7 @@ pub fn init(app: &AppHandle) -> eyre::Result<()> {
     // 过滤掉来自其他库的日志
     let target_filter = Targets::new().with_target(lib_target, Level::TRACE);
     // 输出到文件
-    let (file_layer, guard) = create_file_layer(app)?;
+    let (file_layer, guard) = create_file_layer(app.as_ref())?;
     let (reloadable_file_layer, reload_handle) = tracing_subscriber::reload::Layer::new(file_layer);
     // 输出到控制台
     let console_layer = layer()
@@ -97,16 +96,16 @@ pub fn init(app: &AppHandle) -> eyre::Result<()> {
         .init();
 
     GUARD.get_or_init(|| parking_lot::Mutex::new(guard));
+    let app_for_reload = Arc::clone(&app);
     RELOAD_FN.get_or_init(move || {
-        let app = app.clone();
         Box::new(move || {
-            let (file_layer, guard) = create_file_layer(&app)?;
+            let (file_layer, guard) = create_file_layer(app_for_reload.as_ref())?;
             reload_handle.reload(file_layer).wrap_err("reload失败")?;
             *GUARD.get().ok_or_eyre("GUARD未初始化")?.lock() = guard;
             Ok(())
         })
     });
-    tauri::async_runtime::spawn(file_log_watcher(app.clone()));
+    tauri::async_runtime::spawn(file_log_watcher(app));
 
     Ok(())
 }
@@ -126,12 +125,12 @@ pub fn disable_file_logger() -> eyre::Result<()> {
 
 #[instrument(level = "error", skip_all)]
 fn create_file_layer<S>(
-    app: &AppHandle,
+    app: &dyn crate::service::AppContext,
 ) -> eyre::Result<(Box<dyn Layer<S> + Send + Sync>, Option<WorkerGuard>)>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    let enable_file_logger = app.get_config().read().enable_file_logger;
+    let enable_file_logger = app.config().enable_file_logger;
     // 如果不启用文件日志，则返回一个占位用的sink layer，不创建也不输出日志文件
     if !enable_file_logger {
         let sink_layer = layer()
@@ -162,7 +161,7 @@ where
 }
 
 #[instrument(level = "error", skip_all)]
-async fn file_log_watcher(app: AppHandle) {
+async fn file_log_watcher(app: Arc<dyn crate::service::AppContext>) {
     let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
     let event_handler_span = tracing::error_span!("file_log_watcher_event_handler");
 
@@ -190,7 +189,7 @@ async fn file_log_watcher(app: AppHandle) {
         }
     };
 
-    let logs_dir = match logs_dir(&app) {
+    let logs_dir = match logs_dir(app.as_ref()) {
         Ok(logs_dir) => logs_dir,
         Err(err) => {
             let err_title = "日志文件watcher获取日志目录失败";
@@ -238,10 +237,6 @@ async fn file_log_watcher(app: AppHandle) {
 }
 
 #[instrument(level = "error", skip_all)]
-pub fn logs_dir(app: &AppHandle) -> eyre::Result<std::path::PathBuf> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .wrap_err("获取app_data_dir目录失败")?;
-    Ok(app_data_dir.join("日志"))
+pub fn logs_dir(app: &dyn crate::service::AppContext) -> eyre::Result<std::path::PathBuf> {
+    Ok(app.paths().logs_dir.clone())
 }

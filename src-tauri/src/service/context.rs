@@ -47,7 +47,7 @@ impl AppPaths {
 ///
 /// 同一个业务函数既能跑在 Tauri 桌面端（`AppHandle` 实现），
 /// 也能跑在 HTTP 服务端（`HttpAppContext` 实现，后续步骤添加）。
-pub trait AppContext: Sync {
+pub trait AppContext: Send + Sync {
     fn config(&self) -> RwLockReadGuard<'_, Config>;
     fn config_mut(&self) -> RwLockWriteGuard<'_, Config>;
     fn jm_client(&self) -> &JmClient;
@@ -63,14 +63,8 @@ pub trait AppContext: Sync {
     ///
     /// 不返回 Result：错误仅 log warn，调用方可以 fire-and-forget。
     ///
-    /// 注意：因为是泛型方法，这里加了 `where Self: Sized`，
-    /// 也就是说 `&dyn AppContext` 上不能调用，必须拿到具体类型
-    /// （`AppHandle` 或未来的 `HttpAppContext`）才能 dispatch。
-    /// 实际上事件都是从持有具体 ctx 的地方（commands / 后台任务）发出的，
-    /// 领域层方法不会 dispatch，所以这个限制不痛。
-    fn dispatch<E: Serialize + Clone>(&self, event_name: &str, payload: E)
-    where
-        Self: Sized;
+    /// 没有 `Self: Sized` 限制，`&dyn AppContext` 上也能调。
+    fn dispatch(&self, event_name: &str, payload: serde_json::Value);
 
     /// 替代 `app.opener().open_path(...)`：用系统默认应用打开文件/目录。
     ///
@@ -111,7 +105,7 @@ impl AppContext for tauri::AppHandle {
         self.state::<AppPaths>().inner()
     }
 
-    fn dispatch<E: Serialize + Clone>(&self, event_name: &str, payload: E) {
+    fn dispatch(&self, event_name: &str, payload: serde_json::Value) {
         // tauri 2 的 emit 是 `tauri::Emitter` trait（带运行时泛型）的方法，
         // 完全限定避免和我们自己的 dispatch 方法名冲突。
         if let Err(err) =
@@ -199,7 +193,7 @@ mod tests {
         fn paths(&self) -> &AppPaths {
             &self.paths
         }
-        fn dispatch<E: Serialize + Clone>(&self, event_name: &str, payload: E) {
+        fn dispatch(&self, event_name: &str, payload: serde_json::Value) {
             // 测试用：把事件序列化后存到 Vec
             let json = serde_json::to_string(&payload).unwrap();
             self.events.lock().push((event_name.to_string(), json));
@@ -246,7 +240,11 @@ mod tests {
         struct FakeEvent {
             msg: String,
         }
-        mock.dispatch("testEvent", FakeEvent { msg: "hi".to_string() });
+        let event = FakeEvent { msg: "hi".to_string() };
+        mock.dispatch(
+            "testEvent",
+            serde_json::to_value(&event).expect("FakeEvent 序列化"),
+        );
         let events = mock.events.lock();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, "testEvent");
