@@ -123,8 +123,9 @@ https://github.com/user-attachments/assets/46096bd9-1fde-4474-b297-0f4389dbe770
 ## 快速开始
 
 ```bash
-# 1. 构建并后台启动
-docker compose up -d --build
+# 1. 拉镜像并后台启动（默认 tag = feat-http-server）
+docker compose pull
+docker compose up -d
 
 # 2. 验证
 curl http://localhost:8080/health
@@ -134,6 +135,22 @@ curl http://localhost:8080/health
 docker compose logs -f
 ls -lh config/logs/   # 文件日志也持久化在 config 卷里
 ```
+
+镜像在 GitHub Container Registry 上,由仓库根目录的
+`.github/workflows/docker.yml` 在 push 到 `main` /
+`feat/http-server` 或打 `v*` tag 时自动构建并发布。
+
+```bash
+docker pull ghcr.io/jjrexwang/jmdownloader-enhance:feat-http-server
+# tag 列表：
+#   feat-http-server    feat/http-server 分支最新
+#   sha-XXXXXXXXXX      每次 commit 的短 SHA
+#   latest              main 分支最新（merge 之后才有）
+#   0.18.0-enhance.10   tauri.conf.json 里的 version（main 分支上）
+```
+
+本地构建（不拉镜像）：把 `docker-compose.yml` 的 `image:` 行换成
+`image: jmcomic-downloader:local` 并加回 `build: { context: ., dockerfile: Dockerfile }` 段。
 
 ## 关键端点
 
