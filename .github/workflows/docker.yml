@@ -129,15 +129,23 @@ jobs:
             exit 0  # 不让 workflow 失败
           fi
 
-          # PATCH 设 public
-          HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/$FOUND/packages/container/$PKG_NAME" \
-            -d '{"visibility":"public","private":false}')
-          echo "PATCH result: HTTP $HTTP"
-          cat /tmp/resp.json | head -c 400
-          echo
+          # 检查当前 visibility,只有 private 才需要 PATCH
+          CURRENT_VIS=$(cat /tmp/probe.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('visibility',''))")
+          echo "current visibility: $CURRENT_VIS"
+
+          if [ "$CURRENT_VIS" = "public" ]; then
+            echo "already public, no PATCH needed"
+          else
+            # PATCH 设 public(只设 visibility,不写 private 字段,GitHub API schema 不接受)
+            HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/$FOUND/packages/container/$PKG_NAME" \
+              -d '{"visibility":"public"}')
+            echo "PATCH result: HTTP $HTTP"
+            cat /tmp/resp.json | head -c 400
+            echo
+          fi
 
           # 不管 PATCH 成功与否,做一次匿名 pull 探活
           echo "--- anonymous pull probe ---"
