@@ -3,19 +3,18 @@
 # docker-entrypoint.sh —— 启动期修正挂载卷属主,然后以降权用户跑 server。
 # =============================================================================
 # 设计目标:
-#   容器以 root 跑这个 entrypoint,把宿主挂上来的 /config /downloads
-#   chown 到容器内非 root 用户(uid/gid = 10001,用户名 jm),
-#   再用 gosu 降权执行 /app/server。
+#   容器以 root 跑这个 entrypoint,自动适配两类环境:
+#     A) 普通 Docker / 容器内是真 root:
+#        - chown 10001:10001 成功 -> 降权到 jm 跑 server (业务进程非 root,安全)
+#     B) Rootless Docker / Podman (容器内 root 是 fake root,只能改映射范围内 uid):
+#        - chown 10001 失败 -> 直接以 root 跑 server (能写,但日志/cookie 归 root)
+#   两种模式都让 server 能跑起来,不会再因 EACCES 在 paths_from_env() 挂掉。
 #
-#   这样:
-#     - 宿主机 ./config 首次 clone 出来是 root:root,不用手动 chown
-#     - 容器内始终以非 root 用户跑业务进程(更安全)
-#     - 任何 host 端用户用 docker compose 拉起来就能直接跑
-#
-# 兼容性:
-#   - 如果 docker-compose.yml 里显式 user: "10001:10001" 让容器以 jm 跑,
-#     chown 会因无权限失败,被 || true 吞掉,然后直接 exec /app/server。
-#   - 默认以 root 跑(没显式 user),走 chown + gosu 降权路径。
+#   行为:
+#     1. 探测 chown 是否可用:touch 一个文件并 chown 到 10001,失败就 fallback
+#     2. 失败模式:把 /config /downloads chmod 777 让所有 uid 都能写
+#        (rootless 用户能立刻用,代价是失去了隔离;但 server 本来就要监听 0.0.0.0)
+#     3. 成功模式:chown -R 10001:10001 /config /downloads,再 gosu 降权
 # =============================================================================
 
 set -eu
@@ -23,19 +22,36 @@ set -eu
 JM_UID=10001
 JM_GID=10001
 
-# 修正挂载卷属主。
-#   - 宿主卷是 root:root 或别的 uid 时,这里能改成 jm:jmid;
-#   - 当前不是 root(已经被 compose 的 user 强制为 10001)时,chown 会失败,
-#     但反正已经是 10001:10001 了,吞掉错误即可。
-for d in /config /downloads; do
-    if [ -d "$d" ]; then
-        chown -R "${JM_UID}:${JM_GID}" "$d" 2>/dev/null || true
-    fi
-done
+echo "[entrypoint] uid=$(id -u) starting; probing chown capability..."
 
-# 降权执行
-if [ "$(id -u)" = "0" ]; then
+# 探测 chown 是否能成功改到容器内 uid 10001
+PROBE=/config/.entrypoint_chown_probe
+rm -f "$PROBE" 2>/dev/null || true
+if touch "$PROBE" 2>/dev/null && chown "${JM_UID}:${JM_GID}" "$PROBE" 2>/dev/null; then
+    rm -f "$PROBE"
+    CHOWN_OK=1
+    echo "[entrypoint] chown ${JM_UID}:${JM_GID} OK -> 走降权路径"
+else
+    rm -f "$PROBE" 2>/dev/null || true
+    CHOWN_OK=0
+    echo "[entrypoint] chown ${JM_UID}:${JM_GID} FAILED -> 走 root 路径 (rootless docker?)"
+fi
+
+if [ "$CHOWN_OK" = "1" ]; then
+    # 修正挂载卷属主
+    for d in /config /downloads; do
+        if [ -d "$d" ]; then
+            chown -R "${JM_UID}:${JM_GID}" "$d" 2>/dev/null || true
+        fi
+    done
     exec gosu "${JM_UID}:${JM_GID}" /app/server "$@"
 else
+    # Rootless 场景:没法 chown,直接把挂载卷 chmod 让所有 uid 都能写
+    for d in /config /downloads; do
+        if [ -d "$d" ]; then
+            chmod -R a+rwX "$d" 2>/dev/null || true
+        fi
+    done
+    # 以当前 uid (root / fake root) 跑 server,能写文件
     exec /app/server "$@"
 fi
