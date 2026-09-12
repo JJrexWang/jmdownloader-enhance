@@ -129,10 +129,17 @@ async function doSearch(page) {
     const data = await API.post('/search', {
       keyword, page, sort: State.search.sort,
     });
-    // data 可能是 SearchResultVariant, 优先取 .Search 或直接是 array
-    const list = Array.isArray(data) ? data : (data?.Search || data?.search || []);
+    // /search 返回 SearchResultVariant:
+    //   { SearchResult: { searchQuery, total, content: [...] } }
+    //   | { Comic: <单本> }
+    let list = [];
+    if (Array.isArray(data)) list = data;
+    else if (data?.SearchResult?.content) list = data.SearchResult.content;
+    else if (data?.searchResult?.content) list = data.searchResult.content;
+    else if (data?.Comic) list = [data.Comic];
+    else if (data?.comic) list = [data.comic];
     State.search.results = list;
-    State.search.total = list.length;
+    State.search.total = data?.SearchResult?.total ?? data?.searchResult?.total ?? list.length;
     renderSearch();
   } catch (err) { toast('搜索失败: ' + err.message, 'error'); }
 }
@@ -155,7 +162,7 @@ function renderSearch() {
 function renderComicCard(c, comicId) {
   const title = c.name ?? c.title ?? '(无标题)';
   const author = c.author ?? '';
-  const cover = c.img_url ?? c.cover ?? c.thumbnail ?? '';
+  const cover = c.image ?? c.img_url ?? c.imgUrl ?? c.cover ?? c.thumbnail ?? '';
   const isDownloaded = c.is_downloaded ?? c.isDownloaded;
   const isDownloading = c.is_downloading ?? c.isDownloading;
   return el('div', { class: 'card' },
@@ -280,7 +287,8 @@ async function loadFavorite() {
   try {
     const info = await API.post('/favorites', { folder_id: -1, page: 1, sort: 'mr' });
     // 不同 jm API 返回结构不同, 这里尽量宽松
-    State.fav.folders = info?.folders || info?.Folders || info?.data?.folders || [];
+    // server 返回 { list, folderList, total, count } (camelCase)
+    State.fav.folders = info?.folderList || info?.folder_list || info?.Folders || info?.folders || [];
     if (State.fav.folders.length === 0) {
       // 尝试拿用户 profile 里的 folder 列表
       try {
@@ -315,7 +323,7 @@ async function selectFavFolder(id) {
     const data = await API.post('/favorites', {
       folder_id: id, page: 1, sort: 'mr',
     });
-    const list = data?.comics || data?.data?.comics || (Array.isArray(data) ? data : []);
+    const list = data?.list || data?.List || data?.comics || (Array.isArray(data) ? data : []);
     State.fav.comics = list;
     const host = $('#fav-results');
     host.innerHTML = '';
@@ -361,10 +369,9 @@ async function loadWeekly() {
 function renderWeeklyTypes() {
   const sel = $('#weekly-type');
   sel.innerHTML = '';
-  const cat = (State.weekly.info?.categories || []).find(c =>
-    (c.id ?? c.ID) == State.weekly.category
-  );
-  const types = cat?.categorySubs || cat?.category_subs || cat?.CategorySubs || [];
+  // weekly-info 返回 { categories: [...], type: [{id, title}, ...] }
+  // type 是顶层数组, 不在每个 category 下
+  const types = State.weekly.info?.type || State.weekly.info?.Type || [];
   for (const t of types) {
     const id = t.id ?? t.ID;
     const name = t.title ?? t.name ?? t.NAME ?? `type ${id}`;
@@ -382,7 +389,7 @@ async function loadWeeklyList() {
       category_id: String(State.weekly.category),
       type_id: String(State.weekly.type),
     });
-    const list = data?.comics || data?.data?.comics || (Array.isArray(data) ? data : []);
+    const list = data?.list || data?.List || data?.comics || (Array.isArray(data) ? data : []);
     State.weekly.comics = list;
     const host = $('#weekly-results');
     host.innerHTML = '';
