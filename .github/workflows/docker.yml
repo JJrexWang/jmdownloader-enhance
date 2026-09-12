@@ -40,17 +40,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # QEMU 给 arm64 build 用(amd64 是 runner native,QEMU 不会用上)。
+      # 用 binfmt 镜像启 qemu-user-static,buildx 自动接管。
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      # GitHub Actions 内置 cache 后端，免配 redis
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
 
       # 解析 image metadata：自动产生多个 tag
       #   - tag  push:    <version>
@@ -70,26 +68,21 @@ jobs:
             type=ref,event=branch
             type=sha,format=short
 
+      # 多架构:linux/amd64 + linux/arm64。
+      #  cache 用 type=gha 而非 type=local,因为 local cache 不能跨 arch 共享,
+      #  而 gha cache 在 GitHub Actions 后端按 arch 维度自动分区。
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          # 单架构先稳：arm64 用 QEMU 仿真极慢（>8 分钟 build + cache 协调
-          # 容易把 COPY 阶段卡掉）；后续稳定后单独跑 arm64 job 再合并 manifest。
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           provenance: false
-
-      # 把新 cache 拷回原路径，下次 step 直接命中
-      - name: Move cache
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       # GHCR user-owned 包默认 private,需要 PATCH 改 public 才能匿名 pull。
       # 包 owner 不一定是 github.repository_owner(GITHUB_TOKEN 是 bot),所以先
