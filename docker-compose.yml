@@ -14,10 +14,14 @@
 # 改下载根目录：把 ./downloads 改成别的宿主路径；或在容器启动后改
 #   /config/config.json 里的 downloadDir。
 #
-# 关于挂载卷属主：容器内的 entrypoint 脚本会以 root 跑起来，
-# 自动把 /config /downloads chown 到容器内非 root 用户(uid 10001)，
-# 再用 gosu 降权执行 server。所以宿主机 ./config 是不是 root:root
-# 都无所谓，不用手动 chown，也不用再写 user: "0:0"。
+# 关于挂载卷属主：容器内 entrypoint (docker-entrypoint.sh) 会以 root 跑起来，
+# 启动时 probe 一下能不能 chown 到 10001:10001:
+#   - 能 (普通 Docker / 真 root):chown -R 10001:10001 + gosu 降权跑 server
+#   - 不能 (rootless Docker / Podman,容器内 root 是 fake root):
+#     chmod -R a+rwX /config /downloads + 直接以 root 跑 server
+# 两种模式都让 server 能写挂载卷,任意环境不再因 EACCES 挂掉。
+# 所以宿主机 ./config 是不是 root:root 都无所谓,不用手动 chown,
+# 也不用再写 user: "0:0"。
 
 services:
   jmcomic-downloader:
@@ -43,9 +47,9 @@ services:
       # 日志级别：error / warn / info / debug / trace
       RUST_LOG: "info"
 
-    # 不设 user,让镜像里 ENTRYPOINT 的 docker-entrypoint.sh 以 root 跑
-    # (修复挂载卷属主),内部 gosu 降权到 jm(uid 10001)再 exec server。
-    # 容器内业务进程依然是非 root,比直接 user: "0:0" 安全。
+    # 不设 user,让镜像里 ENTRYPOINT 的 docker-entrypoint.sh 以 root 跑,
+    # 自适应 chown 降权 / chmod 走 root 两条路径,内部再 exec server。
+    # 容器内业务进程优先非 root(普通 Docker);rootless 场景下会退化到 root。
 
     healthcheck:
       # 等容器起来后用 /health 探活
