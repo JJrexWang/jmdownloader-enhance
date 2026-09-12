@@ -4,7 +4,7 @@
 #   docker compose pull             # 拉新镜像（可选）
 #   docker compose up -d            # 后台启动
 #   docker compose logs -f          # 看日志（stdout + 文件日志也在 /config/logs 下）
-#   curl localhost:8080/health      # 验证
+#   open http://localhost:8080/     # 浏览器打开 WebUI
 #
 # 镜像地址：ghcr.io/jjrexwang/jmdownloader-enhance:<tag>
 #   当前默认 tag = feat-http-server（feat/http-server 分支最新）
@@ -42,8 +42,8 @@ services:
       # 监听端口（容器内；改宿主机侧用上面的 ports）
       JM_PORT: "8080"
       # 想启动时自动登录就填进去；不填也不影响，后续用 POST /login 也能登
-      JM_USERNAME: ""
-      JM_PASSWORD: ""
+      # JM_USERNAME: ""
+      # JM_PASSWORD: ""
       # 日志级别：error / warn / info / debug / trace
       RUST_LOG: "info"
 

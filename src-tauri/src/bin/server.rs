@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Request, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -36,6 +36,7 @@ use jmcomic_downloader_lib::types::{
 use jmcomic_downloader_lib::downloader::batch_ops;
 use jmcomic_downloader_lib::types;
 use jmcomic_downloader_lib::utils;
+use axum::handler::HandlerWithoutStateExt;
 use tower_http::services::ServeDir;
 
 type SharedState = Arc<HttpAppContext>;
@@ -108,7 +109,7 @@ async fn main() -> eyre::Result<()> {
         .route("/sync-comic-in-weekly", post(sync_comic_in_weekly))
         .route("/logs/list", get(get_logs_list))
         .route("/logs/content", get(get_logs_content))
-        .fallback_service(ServeDir::new("/app/webui").fallback(serve_index_html))
+        .fallback_service(ServeDir::new("/app/webui").fallback(serve_index_html.into_service()))
         .with_state(shared);
 
     // 6. 监听。
@@ -556,7 +557,7 @@ pub fn sync_comic_impl(ctx: &dyn AppContext, mut comic: Comic) -> eyre::Result<C
 
 /// 任何未命中的路径（包括 `/`、`/config-page` 这种 deep link）都回 index.html，
 /// 让前端用 hash 路由或自己 history API 处理。
-async fn serve_index_html() -> impl IntoResponse {
+async fn serve_index_html(_req: Request) -> impl IntoResponse {
     match tokio::fs::read("/app/webui/index.html").await {
         Ok(html) => (
             StatusCode::OK,
