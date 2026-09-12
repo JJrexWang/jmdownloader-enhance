@@ -45,6 +45,14 @@ RUN cargo fetch
 # 真实源码到位再编译
 COPY src-tauri/ ./src-tauri/
 
+# 强制重编本项目 crate，防止 Docker buildx local cache 的内容哈希在
+# source 改了之后没正确失效，导致 server binary 还是从上一版源码出来的。
+# 典型表现：改了 `#[serde(alias = ...)]` 之后，/search 仍然 422，错误信息
+# 里的 "expected one of" 不包含 alias。
+#
+# 重编后 cargo fetch 缓存的 registry/git db 还在，所以这一步不慢。
+RUN cargo clean --release -p jmcomic-downloader 2>/dev/null || cargo clean --release
+
 # release 构建，strip + lto 已在 Cargo.toml [profile.release] 启用
 RUN cargo build --release --bin server --manifest-path src-tauri/Cargo.toml
 
