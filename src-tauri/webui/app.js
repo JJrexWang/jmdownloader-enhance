@@ -208,9 +208,14 @@ function renderDetail() {
   if (!c) return;
   $('#detail-empty').classList.add('hidden');
   $('#detail-content').classList.remove('hidden');
-  $('#detail-cover').src = c.img_url || c.cover || '';
+  // 兼容多种字段名:SearchResult 是 image,/comic/:id 是 img_url/cover 等历史命名
+  $('#detail-cover').src = c.image ?? c.img_url ?? c.imgUrl ?? c.cover ?? c.thumbnail ?? '';
   $('#detail-title').textContent = c.name || c.title || '';
-  $('#detail-author').textContent = [c.author, c.pages ? c.pages + ' 页' : ''].filter(Boolean).join(' · ');
+  // author 可能是字符串(搜索结果)或数组(/comic/:id 返回 Vec<String>),都要 flatten
+  // pages 字段 Comic 不返回,只在 chapter 维度
+  const authorStr = Array.isArray(c.author) ? c.author.filter(Boolean).join(', ') : (c.author || '');
+  const pagesStr = c.pages ? c.pages + ' 页' : '';
+  $('#detail-author').textContent = [authorStr, pagesStr].filter(Boolean).join(' · ');
   const tagsHost = $('#detail-tags');
   tagsHost.innerHTML = '';
   for (const t of (c.tags || [])) tagsHost.appendChild(el('span', { class: 'tag' }, t));
@@ -560,16 +565,29 @@ $('#progress-toggle').addEventListener('click', () => {
 });
 function startSSE() {
   const es = new EventSource('/events');
-  es.onmessage = (e) => {
-    // 通用 message, server 默认不指定 event 类型
-    try { handleEvent(null, JSON.parse(e.data)); } catch {}
+  // 解开 server 的 {event, data} 嵌套
+  // Rust 端: #[serde(tag = "event", content = "data")] enum DownloadEvent =>
+  //   { "event": "TaskCreate", "data": { state, comic, chapter_info, ... } }
+  // webui 期望的字段都在 data 里,所以把 envelope 拆掉再交给 handleEvent
+  const unwrap = (raw) => {
+    try {
+      const p = JSON.parse(raw);
+      if (p && typeof p === 'object' && p.data && typeof p.data === 'object') {
+        return p.data;
+      }
+      return p;
+    } catch { return null; }
   };
-  // server 用 .event(name) 推送, EventSource 会按 name 分发
-  const names = ['DownloadImgProgress', 'DownloadTaskStateChange', 'DownloadEvent',
-                 'CreateDownloadTask', 'DeleteDownloadTask'];
+  es.onmessage = (e) => {
+    const payload = unwrap(e.data);
+    if (payload) handleEvent(null, payload);
+  };
+  // server 只发一个 named event:"download-event"(SSE event: 那一行)
+  const names = ['download-event'];
   for (const n of names) {
     es.addEventListener(n, e => {
-      try { handleEvent(n, JSON.parse(e.data)); } catch {}
+      const payload = unwrap(e.data);
+      if (payload) handleEvent(n, payload);
     });
   }
   es.onerror = () => { /* 暂时忽略, EventSource 会自动重连 */ };
@@ -577,16 +595,26 @@ function startSSE() {
 function handleEvent(name, payload) {
   if (!payload) return;
   // 容忍不同 event 命名 (snake / camel)
+  // chapter_info 嵌套结构里 chapterId/chapterTitle 也是 camelCase
   const comicId = payload.comic_id ?? payload.comicId ?? payload.comic?.id;
-  const chapterId = payload.chapter_id ?? payload.chapterId ?? payload.chapter?.chapter_id;
+  const chapterId = payload.chapter_id ?? payload.chapterId
+                 ?? payload.chapter_info?.chapter_id ?? payload.chapter_info?.chapterId
+                 ?? payload.chapter?.chapter_id;
   if (chapterId == null && comicId == null) return;
   const key = taskKey(comicId, chapterId);
   const downloaded = payload.downloaded_img_count ?? payload.downloadedImgCount
                   ?? payload.downloaded ?? 0;
   const total = payload.total_img_count ?? payload.totalImgCount ?? payload.total ?? 0;
   const state = payload.state ?? payload.task_state ?? '';
-  const title = payload.comic_title ?? payload.comicTitle
+  // 标题兼容链:
+  //   TaskCreate.payload.comic.name        —— 漫画标题(Comic 字段叫 name)
+  //   TaskCreate.payload.chapter_info.chapter_title/chapterTitle
+  //   TaskUpdate 没 comic,沿用上次记录的 title
+  const prior = State.tasks.get(key);
+  const title = payload.comic?.name ?? payload.comic_title ?? payload.comicTitle
+              ?? payload.chapter_info?.chapter_title ?? payload.chapter_info?.chapterTitle
               ?? payload.chapter_title ?? payload.chapterTitle
+              ?? prior?.title
               ?? `Task ${chapterId ?? ''}`;
   const t = { title, downloaded, total, state, comicId, chapterId };
   if (state === 'Completed' || state === 'completed') {
