@@ -45,25 +45,9 @@ RUN cargo fetch
 # 真实源码到位再编译
 COPY src-tauri/ ./src-tauri/
 
-# 强制让本项目 crate 真正重编, 不被 Docker buildx local cache 偷懒。
-#
-# 背景: cargo build 跑出来的 binary 是这一层的 *output*, Docker 按
-# "input 哈希 (前一层 FS + 命令)" 决定 cache hit/miss。
-# 之前只 RUN cargo clean 是没有 source 依赖的 fixed command, 它的 hash
-# 不随 src-tauri/src/* 改变, 永远 cache 命中, clean 没跑, 下一步
-# cargo build 又命中了上一版 binary 的 layer — 改 alias 这种纯源码修改
-# 完全漏过去, /search 一直 422。
-#
-# 修法: 用 ADD 把一个会被源码改动影响的小文件 add 进 builder image, 让
-# cargo clean 这一步的 input 哈希绑死源文件, 改一处就 invalid。
-# src-tauri/Cargo.toml 一般不动, 触发不到; 选一个稳定但被源码影响的小文件。
-# 这里直接把 search_sort.rs 拷到一个 sentinel 路径。
-ADD src-tauri/src/types/search_sort.rs /tmp/.cachebust_search_sort
-ADD src-tauri/src/types/favorite_sort.rs /tmp/.cachebust_favorite_sort
-# 只 clean 本项目, 依赖命中 cargo fetch 的 registry 缓存, 不重编 deps。
-RUN cargo clean --release -p jmcomic-downloader 2>/dev/null || cargo clean --release
-
-# release 构建，strip + lto 已在 Cargo.toml [profile.release] 启用
+# release 构建,strip + lto 已在 Cargo.toml [profile.release] 启用。
+# 注意:COPY src-tauri/ 已经把源码 hash 绑进 cache key,
+#      改源码必然 invalid 这一层,无需额外的 cargo clean。
 RUN cargo build --release --bin server --manifest-path src-tauri/Cargo.toml
 
 # ----------------------------------------------------------------------------
