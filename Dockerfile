@@ -70,6 +70,9 @@ WORKDIR /app
 # 默认 target dir 跟着 manifest 走,所以二进制在 src-tauri 子目录下。
 COPY --from=builder /build/src-tauri/src-tauri/target/release/server /app/server
 
+# 拷 webui 静态文件 (vanilla HTML/JS/CSS, 无 build step)
+COPY src-tauri/webui /app/webui
+
 # 数据目录：
 #   /config    —— 持久化配置、cookies、日志（推荐挂卷）
 #   /downloads —— 下载根目录（推荐挂卷，且在 Config.downloadDir 里改成它）

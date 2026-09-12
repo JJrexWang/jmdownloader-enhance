@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JMComic Downloader · WebUI</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- 顶部 nav -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">📚</span>
+      <span class="title">禁漫下载器</span>
+      <span class="tag">WebUI</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="search" class="tab active">搜索</button>
+      <button data-tab="favorite" class="tab">收藏夹</button>
+      <button data-tab="weekly" class="tab">每周必看</button>
+      <button data-tab="downloaded" class="tab">本地库存</button>
+      <button data-tab="config" class="tab">配置</button>
+    </nav>
+    <div class="user-area">
+      <button id="login-btn" class="btn ghost" title="登录 / 注销">登录</button>
+      <div id="user-info" class="user-info hidden">
+        <img id="user-photo" alt="" />
+        <span id="user-name"></span>
+        <button id="logout-btn" class="btn xs ghost">注销</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主体 -->
+  <main class="main">
+    <!-- 左侧: 列表 (search/favorite/weekly/downloaded) -->
+    <section id="pane-list" class="pane-list">
+      <!-- search -->
+      <div data-pane="search" class="pane active">
+        <div class="search-bar">
+          <input id="search-input" type="text" placeholder="搜漫画名 / 作者 / 标签..." />
+          <select id="search-sort">
+            <option value="mr">最新</option>
+            <option value="mv">最多观看</option>
+            <option value="mp">最多图片</option>
+            <option value="tr">最新发布</option>
+          </select>
+          <button id="search-btn" class="btn primary">搜</button>
+        </div>
+        <div id="search-results" class="card-grid"></div>
+        <div id="search-pager" class="pager hidden">
+          <button class="btn" data-page="prev">上一页</button>
+          <span id="search-page-info"></span>
+          <button class="btn" data-page="next">下一页</button>
+        </div>
+      </div>
+
+      <!-- favorite -->
+      <div data-pane="favorite" class="pane">
+        <div class="toolbar">
+          <button id="fav-sync" class="btn">同步收藏夹</button>
+          <button id="fav-download-all" class="btn primary">下载全部</button>
+        </div>
+        <div class="folder-list" id="fav-folders"></div>
+        <div id="fav-results" class="card-grid"></div>
+      </div>
+
+      <!-- weekly -->
+      <div data-pane="weekly" class="pane">
+        <div class="toolbar">
+          <select id="weekly-category"></select>
+          <select id="weekly-type"></select>
+        </div>
+        <div id="weekly-results" class="card-grid"></div>
+      </div>
+
+      <!-- downloaded -->
+      <div data-pane="downloaded" class="pane">
+        <div class="toolbar">
+          <button id="dl-rebuild" class="btn">重建本地索引</button>
+          <span class="hint" id="dl-count"></span>
+        </div>
+        <div id="downloaded-results" class="card-grid"></div>
+      </div>
+
+      <!-- config -->
+      <div data-pane="config" class="pane">
+        <div class="config-form" id="config-form">
+          <p class="muted">加载中...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧: 漫画详情 / 章节列表 -->
+    <aside id="pane-detail" class="pane-detail">
+      <div class="empty-state" id="detail-empty">
+        <p class="muted">选一本漫画,这里会显示章节列表和操作</p>
+      </div>
+      <div id="detail-content" class="hidden">
+        <header class="detail-head">
+          <img id="detail-cover" alt="" />
+          <div class="detail-meta">
+            <h2 id="detail-title"></h2>
+            <p id="detail-author" class="muted small"></p>
+            <p id="detail-tags" class="tags"></p>
+            <div class="detail-actions">
+              <button id="detail-download-all" class="btn primary">下载全部章节</button>
+              <button id="detail-export-cbz" class="btn">导出 CBZ</button>
+              <button id="detail-export-pdf" class="btn">导出 PDF</button>
+            </div>
+          </div>
+          <button class="btn xs ghost detail-close" id="detail-close">✕</button>
+        </header>
+        <div class="chapter-toolbar">
+          <label><input type="checkbox" id="ch-select-all" /> 全选</label>
+          <button id="ch-download-selected" class="btn primary">下载所选</button>
+          <button id="ch-export-cbz" class="btn">导出 CBZ (所选)</button>
+          <button id="ch-export-pdf" class="btn">导出 PDF (所选)</button>
+          <span class="muted small" id="ch-count"></span>
+        </div>
+        <ul id="chapter-list" class="chapter-list"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <!-- 底部: 实时下载进度面板 -->
+  <section class="progress-panel" id="progress-panel">
+    <header class="progress-head">
+      <span>下载进度</span>
+      <span class="muted small" id="progress-count">0 进行中</span>
+      <button class="btn xs ghost" id="progress-toggle">收起</button>
+    </header>
+    <div class="progress-body" id="progress-body">
+      <p class="muted small" id="progress-empty">暂无下载</p>
+    </div>
+  </section>
+
+  <!-- 登录弹窗 -->
+  <div class="modal hidden" id="login-modal">
+    <div class="modal-box">
+      <h3>登录 18comic.vip</h3>
+      <label>账号 <input type="text" id="login-username" autocomplete="username" /></label>
+      <label>密码 <input type="password" id="login-password" autocomplete="current-password" /></label>
+      <p class="error" id="login-error"></p>
+      <div class="modal-actions">
+        <button class="btn ghost" id="login-cancel">取消</button>
+        <button class="btn primary" id="login-submit">登录</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志弹窗 -->
+  <div class="modal hidden" id="logs-modal">
+    <div class="modal-box large">
+      <header class="modal-head">
+        <h3>实时日志</h3>
+        <select id="logs-file"></select>
+        <button class="btn ghost" id="logs-refresh">刷新</button>
+        <button class="btn xs ghost" id="logs-close">✕</button>
+      </header>
+      <pre id="logs-content" class="logs-content"></pre>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast-host"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

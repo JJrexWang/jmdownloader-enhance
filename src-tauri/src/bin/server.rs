@@ -30,10 +30,13 @@ use jmcomic_downloader_lib::config::Config;
 use jmcomic_downloader_lib::export;
 use jmcomic_downloader_lib::logger;
 use jmcomic_downloader_lib::service::{AppContext, HttpAppContext};
-use jmcomic_downloader_lib::types::{Comic, FavoriteSort, SearchSort};
+use jmcomic_downloader_lib::types::{
+    Comic, ComicInFavorite, ComicInSearch, ComicInWeekly, FavoriteSort, SearchSort,
+};
 use jmcomic_downloader_lib::downloader::batch_ops;
 use jmcomic_downloader_lib::types;
 use jmcomic_downloader_lib::utils;
+use tower_http::services::ServeDir;
 
 type SharedState = Arc<HttpAppContext>;
 
@@ -97,6 +100,15 @@ async fn main() -> eyre::Result<()> {
         .route("/export/cbz/chapters", post(export_cbz_chapters))
         .route("/export/pdf/chapters", post(export_pdf_chapters))
         .route("/logs/size", get(get_logs_dir_size))
+        .route("/downloaded-comics", get(get_downloaded_comics))
+        .route("/sync-favorite", post(sync_favorite))
+        .route("/sync-comic", post(sync_comic))
+        .route("/sync-comic-in-favorite", post(sync_comic_in_favorite))
+        .route("/sync-comic-in-search", post(sync_comic_in_search))
+        .route("/sync-comic-in-weekly", post(sync_comic_in_weekly))
+        .route("/logs/list", get(get_logs_list))
+        .route("/logs/content", get(get_logs_content))
+        .fallback_service(ServeDir::new("/app/webui").fallback(serve_index_html))
         .with_state(shared);
 
     // 6. 监听。
@@ -464,7 +476,7 @@ async fn export_cbz(
     Json(comic): Json<Comic>,
 ) -> Result<impl IntoResponse, ApiError> {
     let ctx = state.as_ref().as_ref();
-    let synced = sync_comic(ctx, comic)
+    let synced = sync_comic_impl(ctx, comic)
         .map_err(|err| to_api_error("同步漫画信息失败", err))?;
     export::cbz(ctx, &synced)
         .map_err(|err| to_api_error("导出 CBZ 失败", err))?;
@@ -476,7 +488,7 @@ async fn export_pdf(
     Json(comic): Json<Comic>,
 ) -> Result<impl IntoResponse, ApiError> {
     let ctx = state.as_ref().as_ref();
-    let synced = sync_comic(ctx, comic)
+    let synced = sync_comic_impl(ctx, comic)
         .map_err(|err| to_api_error("同步漫画信息失败", err))?;
     export::pdf(ctx, &synced)
         .map_err(|err| to_api_error("导出 PDF 失败", err))?;
@@ -494,7 +506,7 @@ async fn export_cbz_chapters(
     Json(body): Json<ExportChaptersBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let ctx = state.as_ref().as_ref();
-    let synced = sync_comic(ctx, body.comic)
+    let synced = sync_comic_impl(ctx, body.comic)
         .map_err(|err| to_api_error("同步漫画信息失败", err))?;
     export::cbz_chapters(ctx, &synced, body.chapter_ids)
         .map_err(|err| to_api_error("导出 CBZ (chapters) 失败", err))?;
@@ -506,7 +518,7 @@ async fn export_pdf_chapters(
     Json(body): Json<ExportChaptersBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let ctx = state.as_ref().as_ref();
-    let synced = sync_comic(ctx, body.comic)
+    let synced = sync_comic_impl(ctx, body.comic)
         .map_err(|err| to_api_error("同步漫画信息失败", err))?;
     export::pdf_chapters(ctx, &synced, body.chapter_ids)
         .map_err(|err| to_api_error("导出 PDF (chapters) 失败", err))?;
@@ -529,11 +541,206 @@ async fn get_logs_dir_size(State(state): State<SharedState>) -> Result<impl Into
 
 /// 跟桌面端 `get_synced_comic` 等价：把 Comic 字段跟本地已下载索引对齐
 /// （download_dir / chapter.is_downloaded / chapter.chapter_download_dir 等）。
-fn sync_comic(ctx: &dyn AppContext, mut comic: Comic) -> eyre::Result<Comic> {
+pub fn sync_comic_impl(ctx: &dyn AppContext, mut comic: Comic) -> eyre::Result<Comic> {
     let id_to_dir_map = ctx.downloaded_comics_index().get_or_build(ctx)?;
     let config = ctx.config();
     let dir_fmt = config.dir_fmt.clone();
     let mode = config.chinese_normalization;
     comic.update_fields(&id_to_dir_map, &dir_fmt, mode)?;
     Ok(comic)
+}
+
+// =========================================================================
+// Webui 静态文件 / SPA fallback
+// =========================================================================
+
+/// 任何未命中的路径（包括 `/`、`/config-page` 这种 deep link）都回 index.html，
+/// 让前端用 hash 路由或自己 history API 处理。
+async fn serve_index_html() -> impl IntoResponse {
+    match tokio::fs::read("/app/webui/index.html").await {
+        Ok(html) => (
+            StatusCode::OK,
+            [("content-type", "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response(),
+        Err(err) => {
+            tracing::warn!(?err, "webui index.html 读取失败,返回提示");
+            (
+                StatusCode::NOT_FOUND,
+                [("content-type", "text/plain; charset=utf-8")],
+                format!(
+                    "webui 未找到。请确认镜像里 /app/webui/index.html 存在 ({err})"
+                ),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =========================================================================
+// 新增的 webui 用 endpoint
+// =========================================================================
+
+/// 列出本地下载目录里所有已下载的漫画。
+/// 跟桌面端 `getDownloadedComics` 等价。
+async fn get_downloaded_comics(
+    State(state): State<SharedState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let comics = batch_ops::get_downloaded_comics(ctx);
+    Ok(Json(comics))
+}
+
+/// 同步收藏夹：跟桌面端 `syncFavoriteFolder` 等价。
+/// 实现:对一本固定漫画连续 toggle 两次,触发收藏夹服务端刷新缓存。
+async fn sync_favorite(
+    State(state): State<SharedState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let jm_client = ctx.jm_client();
+    // 跟 commands.rs::sync_favorite_folder 同款
+    let task1 = jm_client.toggle_favorite_comic(468_984);
+    let task2 = jm_client.toggle_favorite_comic(468_984);
+    let (resp1, resp2) = tokio::try_join!(task1, task2)
+        .map_err(|err| to_api_error("同步收藏夹失败", err))?;
+    if resp1.toggle_type == resp2.toggle_type {
+        return Err(to_api_error(
+            "同步收藏夹失败",
+            format!(
+                "两个请求都是`{:?}`操作,toggle 没生效",
+                resp1.toggle_type
+            ),
+        ));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// POST /sync-comic (body: Comic) -> Comic
+/// 给搜索结果、本地库存的漫画加 `downloadDir` / `isDownloaded` 等本地标记。
+async fn sync_comic(
+    State(state): State<SharedState>,
+    Json(comic): Json<Comic>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let synced = sync_comic_impl(ctx, comic)
+        .map_err(|err| to_api_error("同步漫画信息失败", err))?;
+    Ok(Json(synced))
+}
+
+async fn sync_comic_in_favorite(
+    State(state): State<SharedState>,
+    Json(mut comic): Json<ComicInFavorite>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let id_to_dir_map = ctx
+        .downloaded_comics_index()
+        .get_or_build(ctx)
+        .map_err(|err| to_api_error("同步 ComicInFavorite 字段失败", err))?;
+    comic.update_fields(&id_to_dir_map);
+    Ok(Json(comic))
+}
+
+async fn sync_comic_in_search(
+    State(state): State<SharedState>,
+    Json(mut comic): Json<ComicInSearch>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let id_to_dir_map = ctx
+        .downloaded_comics_index()
+        .get_or_build(ctx)
+        .map_err(|err| to_api_error("同步 ComicInSearch 字段失败", err))?;
+    comic.update_fields(&id_to_dir_map);
+    Ok(Json(comic))
+}
+
+async fn sync_comic_in_weekly(
+    State(state): State<SharedState>,
+    Json(mut comic): Json<ComicInWeekly>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let id_to_dir_map = ctx
+        .downloaded_comics_index()
+        .get_or_build(ctx)
+        .map_err(|err| to_api_error("同步 ComicInWeekly 字段失败", err))?;
+    comic.update_fields(&id_to_dir_map);
+    Ok(Json(comic))
+}
+
+/// GET /logs/list -> [{ name, size, modified }]
+async fn get_logs_list(
+    State(state): State<SharedState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let logs_dir = ctx.paths().logs_dir.clone();
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&logs_dir) else {
+        return Ok(Json(out));
+    };
+    for entry in rd.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if !name.ends_with(".log") {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        out.push(json!({
+            "name": name,
+            "size": meta.len(),
+            "modified": modified,
+        }));
+    }
+    out.sort_by(|a, b| {
+        let am = a.get("modified").and_then(|v| v.as_u64()).unwrap_or(0);
+        let bm = b.get("modified").and_then(|v| v.as_u64()).unwrap_or(0);
+        bm.cmp(&am)
+    });
+    Ok(Json(out))
+}
+
+/// GET /logs/content?path=jmcomic-downloader.2026-09-12.log&lines=200
+/// 读 tail -N 行日志内容, 供 webui 弹窗看实时日志。
+async fn get_logs_content(
+    State(state): State<SharedState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let ctx = state.as_ref().as_ref();
+    let logs_dir = ctx.paths().logs_dir.clone();
+    let name = params
+        .get("path")
+        .ok_or_else(|| to_api_error("缺少 path 参数", "no path"))?;
+    let lines: usize = params
+        .get("lines")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200);
+    // 安全:只允许读 logs_dir 下面的 .log 文件, 防止路径穿越
+    if name.contains('/') || name.contains("..") || !name.ends_with(".log") {
+        return Err(to_api_error("非法路径", name.clone()));
+    }
+    let path = logs_dir.join(name);
+    let content = std::fs::read_to_string(&path)
+        .map_err(|err| to_api_error("读取日志失败", err))?;
+    // tail
+    let buf: Vec<&str> = content.lines().rev().take(lines).collect();
+    let mut out: Vec<&str> = buf;
+    out.reverse();
+    Ok(Json(json!({
+        "name": name,
+        "lines": out.len(),
+        "content": out.join("\n"),
+    })))
 }

@@ -248,7 +248,8 @@ pub async fn update_downloaded_comics(ctx: &dyn AppContext) -> eyre::Result<()> 
 }
 
 /// 从本地下载目录里 walk 出所有已下载的漫画。
-fn get_downloaded_comics(ctx: &dyn AppContext) -> Vec<crate::types::Comic> {
+/// HTTP server (`src/bin/server.rs`) 直接复用, 避免重复实现。
+pub fn get_downloaded_comics(ctx: &dyn AppContext) -> Vec<crate::types::Comic> {
     let config = ctx.config();
     let download_dir = config.download_dir.clone();
     let dir_fmt = config.dir_fmt.clone();
