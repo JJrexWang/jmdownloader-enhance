@@ -270,6 +270,27 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
   gap: 12px; align-items: center;
   margin-bottom: 12px;
 }
+.field .hint {
+  grid-column: 2;
+  margin: 4px 0 0 0;
+  padding: 0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: #94a3b8;
+  font-weight: 400;
+}
+.field input[type="checkbox"] { justify-self: start; }
+.field .hint:has(+ input[type="checkbox"]),
+.field input[type="checkbox"] + .hint { margin-top: 4px; }
+
+/* 进度条状态颜色 */
+.progress-row.failed .progress-count { color: #f87171; }
+.progress-row.failed .bar-fill { background: #ef4444; opacity: 0.6; }
+.progress-row.paused .progress-count { color: #fbbf24; }
+.progress-row.paused .bar-fill { background: #f59e0b; opacity: 0.6; }
+.progress-row.pending .progress-count { color: #94a3b8; }
+.progress-row.pending .bar-fill { background: #64748b; opacity: 0.4; }
+
 .config-form .field label { color: var(--text-dim); }
 .config-form .field input, .config-form .field select { width: 100%; }
 .config-form .actions { margin-top: 16px; display: flex; gap: 8px; }

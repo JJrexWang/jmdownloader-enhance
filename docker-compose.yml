@@ -4,15 +4,20 @@
 #   docker compose pull             # 拉新镜像（可选）
 #   docker compose up -d            # 后台启动
 #   docker compose logs -f          # 看日志（stdout + 文件日志也在 /config/logs 下）
-#   open http://localhost:8080/     # 浏览器打开 WebUI
+#   open http://localhost:1180/     # 浏览器打开 WebUI (宿主端口 1180)
 #
-# 镜像地址：ghcr.io/jjrexwang/jmdownloader-enhance:<tag>
-#   当前默认 tag = feat-http-server（feat/http-server 分支最新）
-#   后续 main 合并后会多：latest + <tauri 版本号>
+# 镜像地址：ghcr.io/jjrexwang/jmdownloader-enhance
+#   - 默认 tag = latest (main 分支最新,带 webui 修复)
+#   - 多架构:linux/amd64 + linux/arm64 (NAS / 树莓派可直接拉)
+#   - 可选 tag:
+#       main                       显式锁 main
+#       feat-http-server           锁 feat 分支
+#       sha-<7位commit>            锁具体 commit (如 sha-5098203 = webui 修复那次)
+#       0.18.0-enhance.10          锁 tauri 版本号
 #
 # 改默认端口 / JM 账号密码：编辑下面 environment 块。
-# 改下载根目录：把 ./downloads 改成别的宿主路径；或在容器启动后改
-#   /config/config.json 里的 downloadDir。
+# 改下载根目录：把 /vol1/1000/DockerAPPs/jm18/downloads 改成别的宿主路径；
+#   或在容器启动后改 /config/config.json 里的 downloadDir。
 #
 # 关于挂载卷属主：容器内 entrypoint (docker-entrypoint.sh) 会以 root 跑起来，
 # 启动时 probe 一下能不能 chown 到 10001:10001:
@@ -22,28 +27,34 @@
 # 两种模式都让 server 能写挂载卷,任意环境不再因 EACCES 挂掉。
 # 所以宿主机 ./config 是不是 root:root 都无所谓,不用手动 chown,
 # 也不用再写 user: "0:0"。
+#
+# WebUI 已知修复点（最近这次构建带的所有修复）：
+#   - SSE 事件 envelope 解包 (unwrap {event, data} 嵌套) — 之前进度面板永远不显示的根因
+#   - 详情面板 cover 字段链 fallback (image / img_url / imgUrl / cover / thumbnail)
+#   - 详情面板 author 数组 flatten
+#   - title / chapterId 在 chapter_info 嵌套里的回退
 
 services:
   jmcomic-downloader:
-    image: ghcr.io/jjrexwang/jmdownloader-enhance:feat-http-server
+    image: ghcr.io/jjrexwang/jmdownloader-enhance:latest
     container_name: jmcomic-downloader
     restart: unless-stopped
 
     ports:
-      - "8080:8080"   # 改 "0.0.0.0:9000:8080" 可换宿主端口
+      - "1180:8080"   # 宿主端口 1180 -> 容器端口 8080；改宿主端口改这里
 
     volumes:
       # 持久化配置、cookies、日志
-      - ./config:/config
+      - /vol1/1000/DockerAPPs/jm18/config:/config
       # 漫画下载根目录（容器里 Config.downloadDir 也建议改到这里）
-      - ./downloads:/downloads
+      - /vol1/1000/DockerAPPs/jm18/downloads:/downloads
 
     environment:
       # 监听端口（容器内；改宿主机侧用上面的 ports）
       JM_PORT: "8080"
-      # 想启动时自动登录就填进去；不填也不影响，后续用 POST /login 也能登
-      # JM_USERNAME: ""
-      # JM_PASSWORD: ""
+      # JM 账号（启动时自动登录；不填也能用 WebUI 里的登录按钮）
+      JM_USERNAME: "jjrex"
+      JM_PASSWORD: "qazxcwjj"
       # 日志级别：error / warn / info / debug / trace
       RUST_LOG: "info"
 
@@ -52,7 +63,7 @@ services:
     # 容器内业务进程优先非 root(普通 Docker);rootless 场景下会退化到 root。
 
     healthcheck:
-      # 等容器起来后用 /health 探活
+      # 等容器起来后用 /health 探活 (容器内端口 8080)
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/health"]
       interval: 30s
       timeout: 5s

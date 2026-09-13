@@ -162,7 +162,7 @@ function renderSearch() {
 function renderComicCard(c, comicId) {
   const title = c.name ?? c.title ?? '(无标题)';
   const author = c.author ?? '';
-  const cover = c.image ?? c.img_url ?? c.imgUrl ?? c.cover ?? c.thumbnail ?? '';
+  const cover = buildCoverUrl(c, comicId);
   const isDownloaded = c.is_downloaded ?? c.isDownloaded;
   const isDownloading = c.is_downloading ?? c.isDownloading;
   return el('div', { class: 'card' },
@@ -181,6 +181,17 @@ function renderComicCard(c, comicId) {
     ),
   );
 }
+// 跟桌面 Tauri 版 ComicCard.vue 同源: JM API 现在 search/weekly/favorite 返回的
+// `image` 字段经常是空串,但封面 URL 实际上可以用 `comicId` + `_3x4.jpg` 拼出来。
+// 走 no-referrer 直连,实测 cdn-msp3.18comic.vip 不强制 Referer。
+function buildCoverUrl(c, comicId) {
+  const fromApi = c.image ?? c.img_url ?? c.imgUrl ?? c.cover ?? c.thumbnail ?? '';
+  if (fromApi) return fromApi;
+  const id = comicId ?? c.id ?? c.comicId;
+  if (!id) return '';
+  return `https://cdn-msp3.18comic.vip/media/albums/${id}_3x4.jpg`;
+}
+
 // 重新包装: 给 card 整体加 onclick
 const _origRender = renderComicCard;
 function renderComicCardWithClick(c, comicId) {
@@ -209,7 +220,7 @@ function renderDetail() {
   $('#detail-empty').classList.add('hidden');
   $('#detail-content').classList.remove('hidden');
   // 兼容多种字段名:SearchResult 是 image,/comic/:id 是 img_url/cover 等历史命名
-  $('#detail-cover').src = c.image ?? c.img_url ?? c.imgUrl ?? c.cover ?? c.thumbnail ?? '';
+  $('#detail-cover').src = buildCoverUrl(c, c.id);
   $('#detail-title').textContent = c.name || c.title || '';
   // author 可能是字符串(搜索结果)或数组(/comic/:id 返回 Vec<String>),都要 flatten
   // pages 字段 Comic 不返回,只在 chapter 维度
@@ -298,12 +309,18 @@ async function loadFavorite() {
       // 尝试拿用户 profile 里的 folder 列表
       try {
         const profile = await API.get('/user-profile');
-        State.fav.folders = profile?.favorite_folders || profile?.data?.favorite_folders || [];
+        // 同样补 FID 兼容链,user-profile 的 folder 字段也是 FID
+        const pfs = profile?.favorite_folders || profile?.data?.favorite_folders || [];
+        State.fav.folders = pfs;
       } catch {}
     }
     renderFavFolders();
     if (State.fav.folders.length > 0) {
-      selectFavFolder(State.fav.folders[0].id ?? State.fav.folders[0].ID);
+      const first = State.fav.folders[0];
+      const fid = first.FID ?? first.fid ?? first.id ?? first.ID;
+      selectFavFolder(fid);
+    } else {
+      toast('收藏夹为空 (可能未登录或服务器未返回 folder_list)', 'warning');
     }
   } catch (err) { toast('加载收藏夹失败: ' + err.message, 'error'); }
 }
@@ -311,8 +328,10 @@ function renderFavFolders() {
   const host = $('#fav-folders');
   host.innerHTML = '';
   for (const f of State.fav.folders) {
-    const id = f.id ?? f.ID;
-    const name = f.name ?? f.NAME ?? `folder ${id}`;
+    // server 端 FavoriteFolderRespData 用 #[serde(rename = "FID")],
+    // 所以 JSON 里是 FID;同时也兼容老代码里误用的 id/ID。
+    const id = f.FID ?? f.fid ?? f.id ?? f.ID;
+    const name = f.name ?? f.NAME ?? f.NAME_ ?? `folder ${id}`;
     const chip = el('div', {
       class: 'folder-chip' + (id === State.fav.active ? ' active' : ''),
       'data-folder-id': id,
@@ -425,34 +444,53 @@ $('#dl-rebuild').addEventListener('click', () => {
 
 // ----------- 配置 -----------
 const CONFIG_SCHEMA = [
-  { key: 'downloadDir', label: '下载根目录', type: 'text' },
-  { key: 'exportDir', label: '导出根目录', type: 'text' },
+  { key: 'downloadDir', label: '下载根目录', type: 'text',
+    hint: '漫画下载到磁盘的根目录。容器里建议挂到 /downloads 这样的卷,避免容器销毁后丢失文件。' },
+  { key: 'exportDir', label: '导出根目录', type: 'text',
+    hint: '导出 PDF / CBZ 的根目录。相对路径以 downloadDir 为基准。' },
   { key: 'downloadFormat', label: '图片格式', type: 'select',
-    options: [{v:'Jpeg',l:'Jpeg'},{v:'Webp',l:'Webp'},{v:'Png',l:'Png'}] },
-  { key: 'dirFmt', label: '目录命名格式', type: 'text' },
+    options: [{v:'Jpeg',l:'Jpeg'},{v:'Webp',l:'Webp'},{v:'Png',l:'Png'}],
+    hint: 'Jpeg: 有损(肉眼看不出)、体积最小、编码最快;宽高上限 65534(条漫可能超限报错)。\nWebp: 无损、体积约为 jpg 的 4 倍、宽高上限 16383。\nPng: 无损、体积约为 jpg 的 5 倍、编码最慢。' },
+  { key: 'dirFmt', label: '目录命名格式', type: 'text',
+    hint: '用 / 分隔目录层级;至少要两层 (倒数第二层放漫画元数据,最后一层放章节元数据)。\n可用字段: comic_id / chapter_id / comic_title / chapter_title / author / order。\n例: {author}/[{author}] {comic_title}({comic_id})/{order} - {chapter_title}' },
   { key: 'proxyMode', label: '代理模式', type: 'select',
-    options: [{v:'System',l:'系统'},{v:'Disable',l:'不使用'},{v:'Http',l:'Http 代理'}] },
-  { key: 'proxyHost', label: '代理地址', type: 'text' },
-  { key: 'proxyPort', label: '代理端口', type: 'number' },
-  { key: 'enableFileLogger', label: '文件日志', type: 'bool' },
-  { key: 'chapterConcurrency', label: '章节并发', type: 'number' },
-  { key: 'chapterDownloadIntervalSec', label: '章节间隔(秒)', type: 'number' },
-  { key: 'imgConcurrency', label: '图片并发', type: 'number' },
-  { key: 'imgDownloadIntervalSec', label: '图片间隔(秒)', type: 'number' },
-  { key: 'shouldDownloadCover', label: '下载封面', type: 'bool' },
+    options: [{v:'System',l:'系统'},{v:'Disable',l:'不使用'},{v:'Http',l:'Http 代理'}] ,
+    hint: 'System = 走系统代理;Disable = 直连 (不经过任何代理);Http = 用下面填的代理地址。' },
+  { key: 'proxyHost', label: '代理地址', type: 'text',
+    hint: '代理模式选 Http 时生效,例如 127.0.0.1。' },
+  { key: 'proxyPort', label: '代理端口', type: 'number',
+    hint: '代理模式选 Http 时生效,例如 7890 (Clash 默认)。' },
+  { key: 'enableFileLogger', label: '文件日志', type: 'bool',
+    hint: '开启后日志同时写到 /config/logs 下的滚动日志文件,方便事后排查;关闭后只输出到 stdout。' },
+  { key: 'chapterConcurrency', label: '章节并发', type: 'number',
+    hint: '同时下载的章节数。改完需要重启 server 才能生效。值越大占用带宽越多,可能被 JM 风控。' },
+  { key: 'chapterDownloadIntervalSec', label: '章节间隔(秒)', type: 'number',
+    hint: '每个章节下载完成后休息多久再开始下一个,用来缓解反爬。0 = 不休息。' },
+  { key: 'imgConcurrency', label: '图片并发', type: 'number',
+    hint: '同一个章节内同时下载的图片数。改完需要重启 server 才能生效。' },
+  { key: 'imgDownloadIntervalSec', label: '图片间隔(秒)', type: 'number',
+    hint: '每张图片下载完成后休息多久再开始下一张。0 = 不休息。' },
+  { key: 'shouldDownloadCover', label: '下载封面', type: 'bool',
+    hint: '开启后会在每本漫画目录里多下载一张 cover.jpg,用于本地阅读器/Kavita 识别。' },
   { key: 'apiDomainMode', label: 'API 域名', type: 'select',
     options: [
       {v:'Domain1',l:'Domain 1'},{v:'Domain2',l:'Domain 2'},
       {v:'Domain3',l:'Domain 3'},{v:'Domain4',l:'Domain 4'},{v:'Domain5',l:'Domain 5'},
-    ] },
-  { key: 'customApiDomain', label: '自定义 API 域名', type: 'text' },
+    ],
+    hint: 'JM 有 5 条 API 线路,如果某条线路 502/超时切到其他线路试试。切换后可能需要重新登录。' },
+  { key: 'customApiDomain', label: '自定义 API 域名', type: 'text',
+    hint: '把 API 域名改成上面 5 条以外的镜像,例如自建反代。' },
   { key: 'chineseNormalization', label: '简繁归一化', type: 'select',
-    options: [{v:'None',l:'不转换'},{v:'ToSimplified',l:'转简体'},{v:'ToTraditional',l:'转繁体'}] },
-  { key: 'missingImageThreshold', label: '缺失图片容忍', type: 'number' },
+    options: [{v:'None',l:'不转换'},{v:'ToSimplified',l:'转简体'},{v:'ToTraditional',l:'转繁体'}],
+    hint: 'None: 保留网站原文 (简/繁/日混在一起,同一本漫画可能开多个目录)。\nToSimplified: 默认,转简体避免同本漫画开多目录。\nToTraditional: 转繁体。OpenCC 不会动韩文/日文假名/英文/数字。' },
+  { key: 'missingImageThreshold', label: '缺失图片容忍', type: 'number',
+    hint: '章节下载结束时缺失图片数 ≤ 此值视为下载成功 (仅日志告警),不会整章作废。\n设为 0 维持原行为: 缺一张就整章失败,需手动重试整章。\n失败的图片索引会写入日志 (搜索 chapter-download-warning / chapter-download-failure)。' },
   { key: 'chapterArchiveFormat', label: '章节归档', type: 'select',
-    options: [{v:'None',l:'不打包'},{v:'Zip',l:'.zip'},{v:'Cbz',l:'.cbz'}] },
+    options: [{v:'None',l:'不打包'},{v:'Zip',l:'.zip'},{v:'Cbz',l:'.cbz'}],
+    hint: 'None: 保留章节目录,不做额外处理。\nZip: 下载完成后把章节目录打包为 .zip 再删除原目录,导出 PDF/CBZ 时自动解压。\nCbz: 打包为 .cbz (漫画阅读器约定格式),适合只在本地用阅读器看的场景。' },
   { key: 'exportSkipMode', label: '导出跳过', type: 'select',
-    options: [{v:'None',l:'不跳过'},{v:'SkipDownloaded',l:'跳过已下载'}] },
+    options: [{v:'None',l:'不跳过'},{v:'SkipDownloaded',l:'跳过已下载'}] ,
+    hint: '只影响「本地库存」里直接导出整部作品时的行为。「章节详情」里手动勾选导出时一律不跳过,每次重新导出。' },
 ];
 async function loadConfig() {
   try {
@@ -481,8 +519,14 @@ function renderConfig() {
     }
     input.dataset.key = f.key;
     input.dataset.type = f.type;
+    // hint 文本: 多行用 \n 分隔,渲染时转 <br>
+    const hintNode = f.hint
+      ? el('p', { class: 'hint', html: escapeHtml(f.hint).replace(/\n/g, '<br>') })
+      : null;
     host.appendChild(el('div', { class: 'field' },
-      el('label', {}, f.label), input,
+      el('label', {}, f.label),
+      input,
+      hintNode,
     ));
   }
   host.appendChild(el('div', { class: 'actions' },
@@ -605,7 +649,8 @@ function handleEvent(name, payload) {
   const downloaded = payload.downloaded_img_count ?? payload.downloadedImgCount
                   ?? payload.downloaded ?? 0;
   const total = payload.total_img_count ?? payload.totalImgCount ?? payload.total ?? 0;
-  const state = payload.state ?? payload.task_state ?? '';
+  // 兼容多种写法: server 序列化为字符串 "Pending" / "Downloading" / "Failed" / "Completed" / "Paused"
+  const state = payload.state ?? payload.task_state ?? payload.status ?? '';
   // 标题兼容链:
   //   TaskCreate.payload.comic.name        —— 漫画标题(Comic 字段叫 name)
   //   TaskCreate.payload.chapter_info.chapter_title/chapterTitle
@@ -628,6 +673,7 @@ function handleEvent(name, payload) {
   } else if (state === 'Failed' || state === 'failed') {
     State.tasks.set(key, { ...t, state: 'failed' });
     renderProgress();
+    toast(`下载失败: ${t.title}`, 'error', 6000);
   } else if (state === 'Deleted' || state === 'deleted') {
     State.tasks.delete(key);
     renderProgress();
@@ -647,11 +693,30 @@ function renderProgress() {
   }
   for (const t of list) {
     const pct = t.total > 0 ? Math.round((t.downloaded / t.total) * 100) : 0;
-    const row = el('div', { class: 'progress-row' },
+    // 状态显示文案: 跟 server 的 DownloadTaskState 对齐 (Pending/Downloading/Paused/Completed/Failed)
+    let statusLabel, statusClass = '';
+    const s = (t.state || '').toLowerCase();
+    if (s === 'completed') {
+      statusLabel = t.total > 0 ? `${t.downloaded}/${t.total} (100%)` : '完成';
+    } else if (s === 'failed') {
+      statusLabel = '失败';
+      statusClass = 'failed';
+    } else if (s === 'paused') {
+      statusLabel = '已暂停';
+      statusClass = 'paused';
+    } else if (s === 'downloading') {
+      // 下载中: 有 total 就显示比例,否则显示「准备中」表示正在等第一张图
+      statusLabel = t.total > 0 ? `${t.downloaded}/${t.total} (${pct}%)` : '准备中';
+    } else if (s === 'pending') {
+      statusLabel = '排队中';
+      statusClass = 'pending';
+    } else {
+      statusLabel = t.total > 0 ? `${t.downloaded}/${t.total} (${pct}%)` : '准备中';
+    }
+    const row = el('div', { class: `progress-row ${statusClass}` },
       el('span', { class: 'progress-title', title: t.title },
         t.title.length > 30 ? t.title.slice(0, 30) + '…' : t.title),
-      el('span', { class: 'progress-count' },
-        t.total > 0 ? `${t.downloaded}/${t.total} (${pct}%)` : '准备中'),
+      el('span', { class: 'progress-count' }, statusLabel),
       el('div', { class: 'bar' }, el('div', { class: 'bar-fill' })),
     );
     row.querySelector('.bar-fill').style.width = pct + '%';
