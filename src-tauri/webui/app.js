@@ -301,7 +301,9 @@ $('#ch-export-pdf').addEventListener('click', () => withCheckedChapters(ids => {
 // ----------- 收藏夹 -----------
 async function loadFavorite() {
   try {
-    const info = await API.post('/favorites', { folder_id: -1, page: 1, sort: 'mr' });
+    // 跟桌面 Tauri 版对齐: folder_id 用 0(默认收藏夹),JM API 在 folder_id=0/-1 时行为不同,
+    // 用 0 才会一并返回 folder_list,这样页面才能列出所有收藏夹。
+    const info = await API.post('/favorites', { folder_id: 0, page: 1, sort: 'mr' });
     // 不同 jm API 返回结构不同, 这里尽量宽松
     // server 返回 { list, folderList, total, count } (camelCase)
     State.fav.folders = info?.folderList || info?.folder_list || info?.Folders || info?.folders || [];

@@ -263,8 +263,10 @@ pub fn get_downloaded_comics(ctx: &dyn AppContext) -> Vec<crate::types::Comic> {
         if !path.is_dir() {
             continue;
         }
-        // 期望每个目录里有一个「漫画元数据.json」；没有就跳过
-        let metadata_path = path.join("漫画元数据.json");
+        // 期望每个目录里有一个「元数据.json」(由 Comic::save_comic_metadata 写入);
+        // 没有就跳过。注：之前这里写「漫画元数据.json」,跟实际落盘的文件名不一致,
+        // 导致本地库存永远扫不到东西。
+        let metadata_path = path.join("元数据.json");
         if !metadata_path.exists() {
             continue;
         }
