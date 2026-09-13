@@ -46,8 +46,9 @@ const State = {
   // 收藏夹 folders
   fav: { folders: [], active: null, comics: [], page: 1, sort: 'mr' },
   // 更新库存进度 (跟桌面端 UpdateDownloadedComicsButton.vue 的 overview 对齐)
+  // running: 防止用户重复点「调整并下载 / 不调整直接下载」并发跑两轮 update。
   update: { total: 0, done: 0, currentIndex: -1, currentTitle: '',
-            chaptersTotal: 0, chaptersDone: 0, failed: [] },
+            chaptersTotal: 0, chaptersDone: 0, failed: [], running: false },
   // 每周必看
   weekly: { info: null, category: null, type: null, comics: [] },
   // 搜索
@@ -692,8 +693,10 @@ async function adjustIntervals() {
     imgDownloadIntervalSec: cfg.imgDownloadIntervalSec,
     chapterDownloadIntervalSec: cfg.chapterDownloadIntervalSec,
   };
+  // 跟桌面端 agree() 行为对齐: 间隔值已经符合规则时,
+  // 不发 /config 请求,也不显示「已自动调整」toast —— 误报会让用户以为改了什么。
   if (before.imgDownloadIntervalSec === newImg && before.chapterDownloadIntervalSec === newChapter) {
-    return before;  // 没变化,不发请求
+    return null;
   }
   const updated = {
     ...cfg,
@@ -711,8 +714,15 @@ async function adjustIntervals() {
 }
 
 async function startUpdateDownloaded(adjustIntervals) {
+  // 跟桌面端 cleanupAll() 同义: 已经在跑就拒绝二次启动,避免并发两轮。
+  if (State.update.running) {
+    toast('更新库存已经在跑,请等上一轮结束', 'warning', 3000);
+    return;
+  }
+  State.update.running = true;
   // 先重置状态 + 显示浮窗
   resetUpdateProgress();
+  $('#update-progress-title').textContent = '正在更新库存';
   $('#update-progress').classList.remove('hidden');
   setUpdateProgressLine('准备中…');
   setUpdateProgressChapter('');
@@ -730,14 +740,22 @@ async function startUpdateDownloaded(adjustIntervals) {
     // 注意: 这里 resolve 不代表后端跑完,只是 HTTP 请求成功。
     // 真正结束由 GetComicEnd 事件触发,见 handleUpdateDownloadedEvent。
   } catch (err) {
+    State.update.running = false;
     $('#update-progress').classList.add('hidden');
     toast('更新库存失败: ' + err.message, 'error', 6000);
   }
 }
 
 function resetUpdateProgress() {
-  State.update = { total: 0, done: 0, currentIndex: -1, currentTitle: '',
-                   chaptersTotal: 0, chaptersDone: 0, failed: [] };
+  // 注意: running 由 startUpdateDownloaded 入口置 true, GetComicEnd 才置 false,
+  // 这里只重置业务字段,避免误清掉 running 导致二次启动放行。
+  State.update.total = 0;
+  State.update.done = 0;
+  State.update.currentIndex = -1;
+  State.update.currentTitle = '';
+  State.update.chaptersTotal = 0;
+  State.update.chaptersDone = 0;
+  State.update.failed = [];
 }
 
 function setUpdateProgressLine(text) { $('#update-progress-line').textContent = text; }
@@ -802,6 +820,8 @@ function handleUpdateDownloadedEvent(_name, p) {
       const total = State.update.total;
       const failed = State.update.failed.length;
       const succeeded = Math.max(0, total - failed);
+      const card = $('#update-progress');
+      $('#update-progress-title').textContent = '库存更新完成';
       if (failed === 0) {
         setUpdateProgressLine(
           total > 0 ? `库存更新完成: 共检查 ${total} 本, 全部成功` : '本地库存没有需要更新的漫画',
@@ -820,8 +840,13 @@ function handleUpdateDownloadedEvent(_name, p) {
       }
       // 拉一次最新本地库存,把刚补的下载任务 / 新增的已下完漫画显示出来
       loadDownloaded();
-      // 5s 后自动收起进度浮窗(用户点 ✕ 也行)
-      setTimeout(() => $('#update-progress').classList.add('hidden'), 5000);
+      // 全部成功 → 5s 后收起;有失败 → 留到用户主动 ✕,避免失败列表一闪而过看不全。
+      if (failed === 0) {
+        setTimeout(() => card.classList.add('hidden'), 5000);
+      }
+      // running 守卫释放在 GetComicEnd, 而非 startUpdateDownloaded 的 POST resolve,
+      // 因为 POST 立即返回、后端还在跑, 期间必须挡住二次启动。
+      State.update.running = false;
       break;
     }
     default:
