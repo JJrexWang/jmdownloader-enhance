@@ -299,59 +299,32 @@ $('#ch-export-pdf').addEventListener('click', () => withCheckedChapters(ids => {
 }));
 
 // ----------- 收藏夹 -----------
-// 多重 fallback: 不同 (folder_id, sort) 组合调 /favorites,取第一个拿到非空 folderList 的结果。
-// JM API 历史上 folder_id=0 / -1 / 省略、sort 用 'mr' / 'FavoriteTime' / 'mp' 行为都不一致,
-// 一次失败就放弃太脆。Diagnostic 信息会打到 console + toast 里,方便定位。
 async function loadFavorite() {
-  const ATTEMPTS = [
-    { folder_id: 0,  page: 1, sort: 'FavoriteTime' },  // 桌面 Tauri 默认
-    { folder_id: 0,  page: 1, sort: 'mr' },            // mobile shorthand
-    { folder_id: 0,  page: 1, sort: 'UpdateTime' },     // PascalCase 别名
-    { folder_id: 0,  page: 1, sort: 'mp' },            // mobile 别名
-    { folder_id: -1, page: 1, sort: 'mr' },            // 老 webui 写法 (兜底)
-  ];
-  const pickedFrom = [];
-  let info = null;
-  for (const body of ATTEMPTS) {
-    try {
-      const resp = await API.post('/favorites', body);
-      const fl = resp?.folderList ?? resp?.folder_list ?? resp?.Folders ?? resp?.folders ?? [];
-      console.log('[loadFavorite] try', body, '-> keys:', Object.keys(resp || {}), 'folderList.len:', fl.length);
-      if (Array.isArray(fl) && fl.length > 0) {
-        info = resp;
-        pickedFrom.push(`${body.folder_id}/${body.sort} -> ${fl.length}`);
-        break;
-      }
-    } catch (err) {
-      console.log('[loadFavorite] try', body, 'failed:', err.message);
+  try {
+    // 跟桌面 Tauri 版对齐: folder_id 用 0(默认收藏夹),JM API 在 folder_id=0/-1 时行为不同,
+    // 用 0 才会一并返回 folder_list,这样页面才能列出所有收藏夹。
+    const info = await API.post('/favorites', { folder_id: 0, page: 1, sort: 'mr' });
+    // 不同 jm API 返回结构不同, 这里尽量宽松
+    // server 返回 { list, folderList, total, count } (camelCase)
+    State.fav.folders = info?.folderList || info?.folder_list || info?.Folders || info?.folders || [];
+    if (State.fav.folders.length === 0) {
+      // 尝试拿用户 profile 里的 folder 列表
+      try {
+        const profile = await API.get('/user-profile');
+        // 同样补 FID 兼容链,user-profile 的 folder 字段也是 FID
+        const pfs = profile?.favorite_folders || profile?.data?.favorite_folders || [];
+        State.fav.folders = pfs;
+      } catch {}
     }
-  }
-  if (!info) {
-    // 最后一次尝试拿空响应,只为给 toast 提供诊断
-    try { info = await API.post('/favorites', ATTEMPTS[0]); } catch {}
-  }
-  State.fav.folders = info?.folderList ?? info?.folder_list ?? info?.Folders ?? info?.folders ?? [];
-  if (State.fav.folders.length === 0 && info) {
-    // 也试 user-profile 兜底
-    try {
-      const profile = await API.get('/user-profile');
-      const pfs = profile?.favorite_folders || profile?.data?.favorite_folders || [];
-      if (Array.isArray(pfs) && pfs.length > 0) State.fav.folders = pfs;
-    } catch {}
-  }
-  renderFavFolders();
-  if (State.fav.folders.length > 0) {
-    const first = State.fav.folders[0];
-    const fid = first.FID ?? first.fid ?? first.id ?? first.ID;
-    console.log('[loadFavorite] picked', pickedFrom, 'first fid:', fid, 'first:', first);
-    selectFavFolder(fid);
-  } else {
-    // 诊断信息: 让用户立刻看到后端返回了什么
-    const keys = info ? Object.keys(info).join(',') : 'null';
-    const raw = info ? JSON.stringify(info).slice(0, 240) : 'no response';
-    console.warn('[loadFavorite] 全部尝试都拿不到 folder_list, 后端响应 keys =', keys, 'raw =', raw);
-    toast('收藏夹为空 (后端响应 keys=' + keys + ', raw=' + raw + ')', 'warning', 6000);
-  }
+    renderFavFolders();
+    if (State.fav.folders.length > 0) {
+      const first = State.fav.folders[0];
+      const fid = first.FID ?? first.fid ?? first.id ?? first.ID;
+      selectFavFolder(fid);
+    } else {
+      toast('收藏夹为空 (可能未登录或服务器未返回 folder_list)', 'warning');
+    }
+  } catch (err) { toast('加载收藏夹失败: ' + err.message, 'error'); }
 }
 function renderFavFolders() {
   const host = $('#fav-folders');
