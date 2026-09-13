@@ -77,7 +77,8 @@
       <!-- downloaded -->
       <div data-pane="downloaded" class="pane">
         <div class="toolbar">
-          <button id="dl-rebuild" class="btn">重建本地索引</button>
+          <button id="dl-refresh" class="btn ghost" title="重新拉取本地库存列表(不动服务端索引)">刷新库存</button>
+          <button id="dl-rebuild" class="btn" title="服务端走一遍下载目录,重建本地索引(重操作)">重建本地索引</button>
           <span class="hint" id="dl-count"></span>
         </div>
         <div id="downloaded-results" class="card-grid"></div>

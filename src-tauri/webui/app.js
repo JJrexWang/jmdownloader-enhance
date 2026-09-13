@@ -317,19 +317,25 @@ async function loadFavorite() {
       } catch {}
     }
     renderFavFolders();
-    if (State.fav.folders.length > 0) {
-      const first = State.fav.folders[0];
-      const fid = first.FID ?? first.fid ?? first.id ?? first.ID;
-      selectFavFolder(fid);
-    } else {
-      toast('收藏夹为空 (可能未登录或服务器未返回 folder_list)', 'warning');
-    }
+    // 默认直接选合成的 "全部" chip (FID=0),跟桌面 Tauri FavoritePane 默认行为一致。
+    // 这样 webui 一进来就展示全量收藏,而不是某个被 server 偶然排在前面的具体 folder。
+    selectFavFolder(0);
   } catch (err) { toast('加载收藏夹失败: ' + err.message, 'error'); }
 }
 function renderFavFolders() {
   const host = $('#fav-folders');
   host.innerHTML = '';
-  for (const f of State.fav.folders) {
+  // 跟桌面 Tauri (src/panes/FavoritePane.vue:31) 对齐: JM API 对"默认收藏夹"经常
+  // 不返回 folder_list,桌面端永远先放一个 {label:'全部', value:0} 兜底。这里 webui
+  // 同样合成一个 FID=0 的 "全部" chip,优先渲染在最前 —— 这样即使 server 返回空,
+  // 用户至少能点 "全部" 看到全量收藏。
+  const ALL_CHIP = { FID: 0, name: '全部' };
+  const serverFolders = State.fav.folders.filter(f => {
+    const id = f.FID ?? f.fid ?? f.id ?? f.ID;
+    return String(id) !== '0';
+  });
+  const folders = [ALL_CHIP, ...serverFolders];
+  for (const f of folders) {
     // server 端 FavoriteFolderRespData 用 #[serde(rename = "FID")],
     // 所以 JSON 里是 FID;同时也兼容老代码里误用的 id/ID。
     const id = f.FID ?? f.fid ?? f.id ?? f.ID;
@@ -442,6 +448,13 @@ $('#dl-rebuild').addEventListener('click', () => {
   API.post('/download/update-downloaded').then(() => {
     toast('已重建', 'success'); loadDownloaded();
   }).catch(err => toast('失败: ' + err.message, 'error'));
+});
+// 轻量刷新: 只重新拉一次 GET /downloaded-comics,不动服务端索引。
+// 用途: 刚下完一本想立刻看到,或者 server 启动期索引还没建好时手动重拉。
+$('#dl-refresh').addEventListener('click', () => {
+  const btn = $('#dl-refresh');
+  if (btn) btn.disabled = true;
+  loadDownloaded().finally(() => { if (btn) btn.disabled = false; });
 });
 
 // ----------- 配置 -----------
