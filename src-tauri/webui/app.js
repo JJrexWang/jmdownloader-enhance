@@ -45,6 +45,9 @@ const State = {
   tasks: new Map(),
   // 收藏夹 folders
   fav: { folders: [], active: null, comics: [], page: 1, sort: 'mr' },
+  // 更新库存进度 (跟桌面端 UpdateDownloadedComicsButton.vue 的 overview 对齐)
+  update: { total: 0, done: 0, currentIndex: -1, currentTitle: '',
+            chaptersTotal: 0, chaptersDone: 0, failed: [] },
   // 每周必看
   weekly: { info: null, category: null, type: null, comics: [] },
   // 搜索
@@ -299,64 +302,43 @@ $('#ch-export-pdf').addEventListener('click', () => withCheckedChapters(ids => {
 }));
 
 // ----------- 收藏夹 -----------
-// 多重 fallback: 不同 (folder_id, sort) 组合调 /favorites,取第一个拿到非空 folderList 的结果。
-// JM API 历史上 folder_id=0 / -1 / 省略、sort 用 'mr' / 'FavoriteTime' / 'mp' 行为都不一致,
-// 一次失败就放弃太脆。Diagnostic 信息会打到 console + toast 里,方便定位。
 async function loadFavorite() {
-  const ATTEMPTS = [
-    { folder_id: 0,  page: 1, sort: 'FavoriteTime' },  // 桌面 Tauri 默认
-    { folder_id: 0,  page: 1, sort: 'mr' },            // mobile shorthand
-    { folder_id: 0,  page: 1, sort: 'UpdateTime' },     // PascalCase 别名
-    { folder_id: 0,  page: 1, sort: 'mp' },            // mobile 别名
-    { folder_id: -1, page: 1, sort: 'mr' },            // 老 webui 写法 (兜底)
-  ];
-  const pickedFrom = [];
-  let info = null;
-  for (const body of ATTEMPTS) {
-    try {
-      const resp = await API.post('/favorites', body);
-      const fl = resp?.folderList ?? resp?.folder_list ?? resp?.Folders ?? resp?.folders ?? [];
-      console.log('[loadFavorite] try', body, '-> keys:', Object.keys(resp || {}), 'folderList.len:', fl.length);
-      if (Array.isArray(fl) && fl.length > 0) {
-        info = resp;
-        pickedFrom.push(`${body.folder_id}/${body.sort} -> ${fl.length}`);
-        break;
-      }
-    } catch (err) {
-      console.log('[loadFavorite] try', body, 'failed:', err.message);
+  try {
+    // 跟桌面 Tauri 版对齐: folder_id 用 0(默认收藏夹),JM API 在 folder_id=0/-1 时行为不同,
+    // 用 0 才会一并返回 folder_list,这样页面才能列出所有收藏夹。
+    const info = await API.post('/favorites', { folder_id: 0, page: 1, sort: 'mr' });
+    // 不同 jm API 返回结构不同, 这里尽量宽松
+    // server 返回 { list, folderList, total, count } (camelCase)
+    State.fav.folders = info?.folderList || info?.folder_list || info?.Folders || info?.folders || [];
+    if (State.fav.folders.length === 0) {
+      // 尝试拿用户 profile 里的 folder 列表
+      try {
+        const profile = await API.get('/user-profile');
+        // 同样补 FID 兼容链,user-profile 的 folder 字段也是 FID
+        const pfs = profile?.favorite_folders || profile?.data?.favorite_folders || [];
+        State.fav.folders = pfs;
+      } catch {}
     }
-  }
-  if (!info) {
-    // 最后一次尝试拿空响应,只为给 toast 提供诊断
-    try { info = await API.post('/favorites', ATTEMPTS[0]); } catch {}
-  }
-  State.fav.folders = info?.folderList ?? info?.folder_list ?? info?.Folders ?? info?.folders ?? [];
-  if (State.fav.folders.length === 0 && info) {
-    // 也试 user-profile 兜底
-    try {
-      const profile = await API.get('/user-profile');
-      const pfs = profile?.favorite_folders || profile?.data?.favorite_folders || [];
-      if (Array.isArray(pfs) && pfs.length > 0) State.fav.folders = pfs;
-    } catch {}
-  }
-  renderFavFolders();
-  if (State.fav.folders.length > 0) {
-    const first = State.fav.folders[0];
-    const fid = first.FID ?? first.fid ?? first.id ?? first.ID;
-    console.log('[loadFavorite] picked', pickedFrom, 'first fid:', fid, 'first:', first);
-    selectFavFolder(fid);
-  } else {
-    // 诊断信息: 让用户立刻看到后端返回了什么
-    const keys = info ? Object.keys(info).join(',') : 'null';
-    const raw = info ? JSON.stringify(info).slice(0, 240) : 'no response';
-    console.warn('[loadFavorite] 全部尝试都拿不到 folder_list, 后端响应 keys =', keys, 'raw =', raw);
-    toast('收藏夹为空 (后端响应 keys=' + keys + ', raw=' + raw + ')', 'warning', 6000);
-  }
+    renderFavFolders();
+    // 默认直接选合成的 "全部" chip (FID=0),跟桌面 Tauri FavoritePane 默认行为一致。
+    // 这样 webui 一进来就展示全量收藏,而不是某个被 server 偶然排在前面的具体 folder。
+    selectFavFolder(0);
+  } catch (err) { toast('加载收藏夹失败: ' + err.message, 'error'); }
 }
 function renderFavFolders() {
   const host = $('#fav-folders');
   host.innerHTML = '';
-  for (const f of State.fav.folders) {
+  // 跟桌面 Tauri (src/panes/FavoritePane.vue:31) 对齐: JM API 对"默认收藏夹"经常
+  // 不返回 folder_list,桌面端永远先放一个 {label:'全部', value:0} 兜底。这里 webui
+  // 同样合成一个 FID=0 的 "全部" chip,优先渲染在最前 —— 这样即使 server 返回空,
+  // 用户至少能点 "全部" 看到全量收藏。
+  const ALL_CHIP = { FID: 0, name: '全部' };
+  const serverFolders = State.fav.folders.filter(f => {
+    const id = f.FID ?? f.fid ?? f.id ?? f.ID;
+    return String(id) !== '0';
+  });
+  const folders = [ALL_CHIP, ...serverFolders];
+  for (const f of folders) {
     // server 端 FavoriteFolderRespData 用 #[serde(rename = "FID")],
     // 所以 JSON 里是 FID;同时也兼容老代码里误用的 id/ID。
     const id = f.FID ?? f.fid ?? f.id ?? f.ID;
@@ -465,10 +447,25 @@ async function loadDownloaded() {
     }
   } catch (err) { toast('加载本地库存失败: ' + err.message, 'error'); }
 }
-$('#dl-rebuild').addEventListener('click', () => {
-  API.post('/download/update-downloaded').then(() => {
-    toast('已重建', 'success'); loadDownloaded();
-  }).catch(err => toast('失败: ' + err.message, 'error'));
+// 「更新库存」按钮 —— 跟桌面端 UpdateDownloadedComicsButton.vue 等价:
+// 服务端对每本已下载漫画调一次 JM API 拉最新章节,缺章节的自动建任务补齐。
+$('#dl-update').addEventListener('click', () => {
+  $('#update-modal').classList.remove('hidden');
+});
+$('#update-cancel').addEventListener('click', () => {
+  $('#update-modal').classList.add('hidden');
+});
+$('#update-no-adjust').addEventListener('click', async () => {
+  $('#update-modal').classList.add('hidden');
+  await startUpdateDownloaded(/*adjustIntervals=*/false);
+});
+$('#update-agree').addEventListener('click', async () => {
+  $('#update-modal').classList.add('hidden');
+  await startUpdateDownloaded(/*adjustIntervals=*/true);
+});
+// 进度浮窗右上角 ✕: 只隐藏卡片,后台继续跑(SSE 还在收事件,等 GetComicEnd 才彻底结束)
+$('#update-progress-close').addEventListener('click', () => {
+  $('#update-progress').classList.add('hidden');
 });
 
 // ----------- 配置 -----------
@@ -639,14 +636,17 @@ $('#progress-toggle').addEventListener('click', () => {
 function startSSE() {
   const es = new EventSource('/events');
   // 解开 server 的 {event, data} 嵌套
-  // Rust 端: #[serde(tag = "event", content = "data")] enum DownloadEvent =>
-  //   { "event": "TaskCreate", "data": { state, comic, chapter_info, ... } }
-  // webui 期望的字段都在 data 里,所以把 envelope 拆掉再交给 handleEvent
+  // Rust 端: #[serde(tag = "event", content = "data")] enum XXXEvent =>
+  //   { "event": "TaskCreate", "data": { state, comic, ... } }
+  // webui 期望的字段都在 data 里,所以把 envelope 拆掉再交给 handler;
+  // 但 UpdateDownloadedComicsEvent 一个 SSE event name 对应多个 variant
+  // (GetComicStart/GetComicProgress/CreateDownloadTasksStart/.../GetComicEnd),
+  // 拆 envelope 会丢 variant 名,所以把 event 字段保留到 _event 里给 handler 区分。
   const unwrap = (raw) => {
     try {
       const p = JSON.parse(raw);
       if (p && typeof p === 'object' && p.data && typeof p.data === 'object') {
-        return p.data;
+        return Object.assign({}, p.data, { _event: p.event });
       }
       return p;
     } catch { return null; }
@@ -655,16 +655,181 @@ function startSSE() {
     const payload = unwrap(e.data);
     if (payload) handleEvent(null, payload);
   };
-  // server 只发一个 named event:"download-event"(SSE event: 那一行)
-  const names = ['download-event'];
-  for (const n of names) {
+  // server 发多个 named event, 分别路由到不同 handler:
+  //   - download-event                  → handleEvent (下载任务进度)
+  //   - update-downloaded-comics-event   → handleUpdateDownloadedEvent (更新库存进度)
+  const routes = {
+    'download-event': handleEvent,
+    'update-downloaded-comics-event': handleUpdateDownloadedEvent,
+  };
+  for (const n of Object.keys(routes)) {
+    const handler = routes[n];
     es.addEventListener(n, e => {
       const payload = unwrap(e.data);
-      if (payload) handleEvent(n, payload);
+      if (payload) handler(n, payload);
     });
   }
   es.onerror = () => { /* 暂时忽略, EventSource 会自动重连 */ };
 }
+// ============================================================
+// 更新库存 (跟桌面端 UpdateDownloadedComicsButton.vue 等价)
+// ============================================================
+
+// 计算 + 写回自动调整后的 interval,跟桌面端 agree() 完全等价:
+//   imgDownloadIntervalSec    = max(1, floor(imgConcurrency / 5))
+//   chapterDownloadIntervalSec = min(10, floor(imgConcurrency * 3))
+async function adjustIntervals() {
+  if (!State.config) {
+    // 极端兜底:config 还没加载就拉一次
+    try { State.config = await API.get('/config'); } catch {}
+  }
+  const cfg = State.config;
+  if (!cfg) return null;
+  const imgConcurrency = Number(cfg.imgConcurrency) || 20;
+  const newImg = Math.max(1, Math.floor(imgConcurrency / 5));
+  const newChapter = Math.min(10, Math.floor(imgConcurrency * 3));
+  const before = {
+    imgDownloadIntervalSec: cfg.imgDownloadIntervalSec,
+    chapterDownloadIntervalSec: cfg.chapterDownloadIntervalSec,
+  };
+  if (before.imgDownloadIntervalSec === newImg && before.chapterDownloadIntervalSec === newChapter) {
+    return before;  // 没变化,不发请求
+  }
+  const updated = {
+    ...cfg,
+    imgDownloadIntervalSec: newImg,
+    chapterDownloadIntervalSec: newChapter,
+  };
+  try {
+    await API.post('/config', updated);
+    State.config = updated;
+    return before;
+  } catch (err) {
+    toast('自动调整间隔失败: ' + err.message, 'warning');
+    return null;
+  }
+}
+
+async function startUpdateDownloaded(adjustIntervals) {
+  // 先重置状态 + 显示浮窗
+  resetUpdateProgress();
+  $('#update-progress').classList.remove('hidden');
+  setUpdateProgressLine('准备中…');
+  setUpdateProgressChapter('');
+  setUpdateProgressFailed('');
+
+  if (adjustIntervals) {
+    const before = await adjustIntervals();
+    if (before) {
+      toast(`已自动调整: 图片间隔 ${before.imgDownloadIntervalSec}s → ${Math.max(1, Math.floor((State.config.imgConcurrency || 20) / 5))}s, 章节间隔 ${before.chapterDownloadIntervalSec}s → ${Math.min(10, Math.floor((State.config.imgConcurrency || 20) * 3))}s`, 'info', 4000);
+    }
+  }
+
+  try {
+    await API.post('/download/update-downloaded');
+    // 注意: 这里 resolve 不代表后端跑完,只是 HTTP 请求成功。
+    // 真正结束由 GetComicEnd 事件触发,见 handleUpdateDownloadedEvent。
+  } catch (err) {
+    $('#update-progress').classList.add('hidden');
+    toast('更新库存失败: ' + err.message, 'error', 6000);
+  }
+}
+
+function resetUpdateProgress() {
+  State.update = { total: 0, done: 0, currentIndex: -1, currentTitle: '',
+                   chaptersTotal: 0, chaptersDone: 0, failed: [] };
+}
+
+function setUpdateProgressLine(text) { $('#update-progress-line').textContent = text; }
+function setUpdateProgressChapter(text) { $('#update-progress-chapter').textContent = text; }
+function setUpdateProgressFailed(html) {
+  const el = $('#update-progress-failed');
+  el.innerHTML = html;
+  el.classList.toggle('failed', !!html);
+}
+
+function handleUpdateDownloadedEvent(_name, p) {
+  if (!p) return;
+  // unwrap 已经把 envelope 的 event variant 放进 _event 字段
+  const ev = p._event;
+  const data = p;  // 字段全部从顶层取
+  switch (ev) {
+    case 'GetComicStart': {
+      State.update.total = Number(data.total ?? data.Total ?? 0);
+      setUpdateProgressLine(`获取最新数据中: 共 ${State.update.total} 本`);
+      break;
+    }
+    case 'GetComicProgress': {
+      const cur = Number(data.current ?? data.Current ?? 0);
+      const total = Number(data.total ?? data.Total ?? State.update.total);
+      const title = data.currentComicTitle ?? data.current_comic_title ?? '';
+      State.update.currentIndex = cur - 1;
+      State.update.currentTitle = title;
+      setUpdateProgressLine(`进度 ${cur}/${total} · 当前: ${title || '...'}`);
+      break;
+    }
+    case 'CreateDownloadTasksStart': {
+      const total = Number(data.total ?? data.Total ?? 0);
+      const title = data.comicTitle ?? data.comic_title ?? '';
+      State.update.chaptersTotal = total;
+      State.update.chaptersDone = 0;
+      State.update.currentTitle = title;
+      setUpdateProgressLine(`当前: ${title || '...'}`);
+      setUpdateProgressChapter(`正在建下载任务: 0/${total}`);
+      break;
+    }
+    case 'CreateDownloadTaskProgress': {
+      const cur = Number(data.current ?? data.Current ?? 0);
+      if (cur > State.update.chaptersDone) State.update.chaptersDone = cur;
+      setUpdateProgressChapter(`正在建下载任务: ${State.update.chaptersDone}/${State.update.chaptersTotal}`);
+      break;
+    }
+    case 'CreateDownloadTasksEnd': {
+      State.update.done++;
+      State.update.chaptersTotal = 0;
+      State.update.chaptersDone = 0;
+      setUpdateProgressChapter('');
+      break;
+    }
+    case 'FailedComic': {
+      const title = data.comicTitle ?? data.comic_title ?? '(未知)';
+      State.update.failed.push(title);
+      State.update.done++;
+      setUpdateProgressFailed(`失败 ${State.update.failed.length} 本 (详见日志)`);
+      break;
+    }
+    case 'GetComicEnd': {
+      const total = State.update.total;
+      const failed = State.update.failed.length;
+      const succeeded = Math.max(0, total - failed);
+      if (failed === 0) {
+        setUpdateProgressLine(
+          total > 0 ? `库存更新完成: 共检查 ${total} 本, 全部成功` : '本地库存没有需要更新的漫画',
+        );
+        setUpdateProgressFailed('');
+        toast(total > 0 ? `库存更新完成: ${total} 本全部成功` : '本地库存已是最新', 'success', 5000);
+      } else {
+        const last = State.update.failed.slice(-5);
+        const more = State.update.failed.length - last.length;
+        const moreHint = more > 0 ? ` …还有 ${more} 本` : '';
+        setUpdateProgressLine(`库存更新完成: 共 ${total} 本, 成功 ${succeeded} 本, 失败 ${failed} 本`);
+        setUpdateProgressFailed(
+          `失败列表:${last.map(t => ' · ' + t).join('')}${moreHint}`,
+        );
+        toast(`库存更新完成: ${succeeded} 成功, ${failed} 失败 (详见日志)`, 'warning', 8000);
+      }
+      // 拉一次最新本地库存,把刚补的下载任务 / 新增的已下完漫画显示出来
+      loadDownloaded();
+      // 5s 后自动收起进度浮窗(用户点 ✕ 也行)
+      setTimeout(() => $('#update-progress').classList.add('hidden'), 5000);
+      break;
+    }
+    default:
+      // 未知事件,忽略
+      break;
+  }
+}
+
 function handleEvent(name, payload) {
   if (!payload) return;
   // 容忍不同 event 命名 (snake / camel)

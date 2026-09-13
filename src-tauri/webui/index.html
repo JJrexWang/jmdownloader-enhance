@@ -77,7 +77,7 @@
       <!-- downloaded -->
       <div data-pane="downloaded" class="pane">
         <div class="toolbar">
-          <button id="dl-rebuild" class="btn">重建本地索引</button>
+          <button id="dl-update" class="btn" title="服务端对每本已下载漫画调 JM API 拉最新章节,缺章节的自动建任务补齐(重操作)">更新库存</button>
           <span class="hint" id="dl-count"></span>
         </div>
         <div id="downloaded-results" class="card-grid"></div>
@@ -159,6 +159,38 @@
         <button class="btn xs ghost" id="logs-close">✕</button>
       </header>
       <pre id="logs-content" class="logs-content"></pre>
+    </div>
+  </div>
+
+  <!-- 更新库存确认弹窗 (跟桌面端 n-popconfirm 等价) -->
+  <div class="modal hidden" id="update-modal">
+    <div class="modal-box">
+      <h3>更新库存</h3>
+      <p>更新库存是一个大任务:服务端会对每本已下载漫画调一次 JM API 拉最新章节列表,缺章节的会自动建下载任务补齐。</p>
+      <p>为了减轻禁漫服务器压力,推荐自动调整下载间隔:</p>
+      <ul class="muted small update-formula">
+        <li>图片间隔(秒) = max(1, floor(图片并发 / 5))</li>
+        <li>章节间隔(秒) = min(10, floor(图片并发 × 3))</li>
+      </ul>
+      <p class="small muted">调整后你可以随时在「配置」标签里改回去。</p>
+      <div class="modal-actions">
+        <button class="btn ghost" id="update-cancel">取消</button>
+        <button class="btn" id="update-no-adjust">不调整直接下载</button>
+        <button class="btn primary" id="update-agree">调整并下载</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 更新库存进度浮窗 (常驻直到完成 / 关闭) -->
+  <div class="update-progress hidden" id="update-progress">
+    <div class="update-progress-head">
+      <strong>正在更新库存</strong>
+      <button class="btn xs ghost" id="update-progress-close" title="隐藏浮窗(后台继续跑)">✕</button>
+    </div>
+    <div class="update-progress-body">
+      <p class="muted small" id="update-progress-line">等待开始…</p>
+      <p class="muted small" id="update-progress-chapter"></p>
+      <p class="small" id="update-progress-failed"></p>
     </div>
   </div>
 

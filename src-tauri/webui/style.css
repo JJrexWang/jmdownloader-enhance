@@ -310,6 +310,27 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 .folder-chip.active { background: var(--primary); border-color: var(--primary); }
 
 /* ===================== Toast ===================== */
+.update-progress {
+  position: fixed; top: 16px; right: 16px;
+  width: 320px; max-width: calc(100vw - 32px);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 150; pointer-events: auto;
+  font-size: 13px;
+}
+.update-progress.hidden { display: none !important; }
+.update-progress-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  background: var(--bg-3, var(--bg-2));
+}
+.update-progress-head strong { font-size: 13px; }
+.update-progress-body { padding: 10px 12px; }
+.update-progress-body p { margin: 4px 0; }
+.update-progress-body .failed { color: var(--danger, #d03050); }
+.update-formula { padding-left: 20px; margin: 6px 0; line-height: 1.6; }
 #toast-host {
   position: fixed; bottom: 16px; right: 16px;
   display: flex; flex-direction: column; gap: 8px;
