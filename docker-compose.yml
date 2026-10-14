@@ -53,8 +53,8 @@ services:
       # 监听端口（容器内；改宿主机侧用上面的 ports）
       JM_PORT: "8080"
       # JM 账号（启动时自动登录；不填也能用 WebUI 里的登录按钮）
-      JM_USERNAME: "jjrex"
-      JM_PASSWORD: "qazxcwjj"
+      JM_USERNAME: "account"
+      JM_PASSWORD: "password"
       # 日志级别：error / warn / info / debug / trace
       RUST_LOG: "info"
 
