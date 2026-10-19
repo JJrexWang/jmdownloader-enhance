@@ -44,7 +44,7 @@ const State = {
   // 进度面板: taskKey -> { title, downloaded, total, state, ... }
   tasks: new Map(),
   // 收藏夹 folders
-  fav: { folders: [], active: null, comics: [], page: 1, sort: 'mr' },
+  fav: { folders: [], active: null, comics: [], page: 1, sort: 'mr', total: 0, count: 0 },
   // 更新库存进度 (跟桌面端 UpdateDownloadedComicsButton.vue 的 overview 对齐)
   // running: 防止用户重复点「调整并下载 / 不调整直接下载」并发跑两轮 update。
   update: { total: 0, done: 0, currentIndex: -1, currentTitle: '',
@@ -352,22 +352,45 @@ function renderFavFolders() {
     host.appendChild(chip);
   }
 }
-async function selectFavFolder(id) {
+$('#fav-pager').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-page]');
+  if (!btn || btn.disabled) return;
+  selectFavFolder(State.fav.active, btn.dataset.page === 'next' ? State.fav.page + 1 : State.fav.page - 1);
+});
+async function selectFavFolder(id, page = 1) {
   State.fav.active = id;
+  State.fav.page = page;
   renderFavFolders();
   try {
     const data = await API.post('/favorites', {
-      folder_id: id, page: 1, sort: 'mr',
+      folder_id: id, page, sort: State.fav.sort,
     });
     const list = data?.list || data?.List || data?.comics || (Array.isArray(data) ? data : []);
     State.fav.comics = list;
-    const host = $('#fav-results');
-    host.innerHTML = '';
-    for (const c of list) {
-      const id = c.id ?? c.comicId;
-      host.appendChild(renderComicCard(c, id));
-    }
+    // 后端返回 total(总数)/count(每页数)，用于算总页数
+    State.fav.total = Number(data?.total ?? 0) || 0;
+    State.fav.count = Number(data?.count ?? 0) || 0;
+    renderFavResults();
   } catch (err) { toast('加载收藏列表失败: ' + err.message, 'error'); }
+}
+function renderFavResults() {
+  const host = $('#fav-results');
+  host.innerHTML = '';
+  for (const c of State.fav.comics) {
+    host.appendChild(renderComicCard(c, c.id ?? c.comicId));
+  }
+  // 翻页条：只有多于 1 页时显示
+  const pager = $('#fav-pager');
+  const total = State.fav.total, perPage = State.fav.count;
+  const totalPages = perPage > 0 && total > 0 ? Math.ceil(total / perPage) : 1;
+  if (State.fav.comics.length === 0 || totalPages <= 1) {
+    pager.classList.add('hidden');
+    return;
+  }
+  pager.classList.remove('hidden');
+  $('#fav-page-info').textContent = `第 ${State.fav.page} / ${totalPages} 页（共 ${total} 本）`;
+  pager.querySelector('[data-page="prev"]').disabled = State.fav.page <= 1;
+  pager.querySelector('[data-page="next"]').disabled = State.fav.page >= totalPages;
 }
 $('#fav-sync').addEventListener('click', () => {
   API.post('/sync-favorite').then(() => { toast('同步请求已发', 'success'); loadFavorite(); })
