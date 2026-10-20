@@ -388,10 +388,25 @@ function renderFavResults() {
     return;
   }
   pager.classList.remove('hidden');
+  State.fav.totalPages = totalPages;
   $('#fav-page-info').textContent = `第 ${State.fav.page} / ${totalPages} 页（共 ${total} 本）`;
   pager.querySelector('[data-page="prev"]').disabled = State.fav.page <= 1;
   pager.querySelector('[data-page="next"]').disabled = State.fav.page >= totalPages;
 }
+// 指定页跳转：输入页码后回车或点跳转，越界自动夹到 [1, 总页数]
+function favGoToPage() {
+  const input = $('#fav-page-input');
+  const totalPages = State.fav.totalPages || 1;
+  let p = parseInt(input.value, 10);
+  if (isNaN(p)) return;
+  p = Math.max(1, Math.min(totalPages, p));
+  input.value = '';
+  if (p !== State.fav.page) selectFavFolder(State.fav.active, p);
+}
+$('#fav-page-go').addEventListener('click', favGoToPage);
+$('#fav-page-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') favGoToPage();
+});
 $('#fav-sync').addEventListener('click', () => {
   API.post('/sync-favorite').then(() => { toast('同步请求已发', 'success'); loadFavorite(); })
     .catch(err => toast('同步失败: ' + err.message, 'error'));
