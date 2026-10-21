@@ -19,6 +19,7 @@
       <button data-tab="favorite" class="tab">收藏夹</button>
       <button data-tab="weekly" class="tab">每周必看</button>
       <button data-tab="downloaded" class="tab">本地库存</button>
+      <button data-tab="tasks" class="tab">任务中心</button>
       <button data-tab="config" class="tab">配置</button>
     </nav>
     <div class="user-area">
@@ -90,6 +91,29 @@
           <span class="hint" id="dl-count"></span>
         </div>
         <div id="downloaded-results" class="card-grid"></div>
+      </div>
+
+      <!-- tasks: 任务中心 -->
+      <div data-pane="tasks" class="pane">
+        <div class="task-center">
+          <section class="task-section">
+            <h3>更新库存</h3>
+            <div id="tc-update-status" class="task-status">
+              <p class="muted">加载中...</p>
+            </div>
+            <div id="tc-update-progress" class="progress-wrap hidden">
+              <div class="progress-bar"><div class="progress-fill" id="tc-update-fill"></div></div>
+              <div class="progress-text" id="tc-update-text"></div>
+            </div>
+            <div id="tc-update-failed" class="failed-list"></div>
+          </section>
+          <section class="task-section">
+            <h3>下载队列 <span class="hint" id="tc-dl-count"></span></h3>
+            <div id="tc-downloads" class="download-list">
+              <p class="muted">加载中...</p>
+            </div>
+          </section>
+        </div>
       </div>
 
       <!-- config -->

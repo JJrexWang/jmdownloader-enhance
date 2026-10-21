@@ -30,6 +30,7 @@ use jmcomic_downloader_lib::config::Config;
 use jmcomic_downloader_lib::export;
 use jmcomic_downloader_lib::logger;
 use jmcomic_downloader_lib::service::{AppContext, HttpAppContext};
+use jmcomic_downloader_lib::task_center::{self, DownloadTaskInfo, TaskCenterSnapshot};
 use jmcomic_downloader_lib::types::{
     Comic, ComicInFavorite, ComicInSearch, ComicInWeekly, FavoriteSort, SearchSort,
 };
@@ -109,6 +110,7 @@ async fn main() -> eyre::Result<()> {
         .route("/sync-comic-in-weekly", post(sync_comic_in_weekly))
         .route("/logs/list", get(get_logs_list))
         .route("/logs/content", get(get_logs_content))
+        .route("/task-center", get(get_task_center))
         .fallback_service(ServeDir::new("/app/webui").fallback(serve_index_html.into_service()))
         .with_state(shared);
 
@@ -470,6 +472,42 @@ async fn update_downloaded_comics(
         .await
         .map_err(|err| to_api_error("更新已下载漫画失败", err))?;
     Ok(Json(json!({ "ok": true })))
+}
+
+/// 任务中心快照：更新库存状态 + 下载队列，刷新页面后重新拉取即可恢复显示。
+async fn get_task_center(State(state): State<SharedState>) -> impl IntoResponse {
+    let update_inventory = task_center::task_center().snapshot_update();
+
+    // 从 DownloadManager 实时读取下载任务
+    let tasks = state.download_manager().download_tasks.read();
+    let mut downloads: Vec<DownloadTaskInfo> = tasks
+        .values()
+        .map(|t| {
+            let st = t.state_sender.borrow().clone();
+            DownloadTaskInfo {
+                chapter_id: t.chapter_info.chapter_id,
+                comic_id: t.comic.id,
+                comic_title: t.comic.name.clone(),
+                chapter_title: t.chapter_info.chapter_title.clone(),
+                state: format!("{:?}", st),
+                downloaded: t.downloaded_img_count.load(std::sync::atomic::Ordering::Relaxed),
+                total: t.total_img_count.load(std::sync::atomic::Ordering::Relaxed),
+            }
+        })
+        .collect();
+    // 下载中的排前面
+    downloads.sort_by_key(|d| match d.state.as_str() {
+        "Downloading" => 0,
+        "Pending" => 1,
+        "Paused" => 2,
+        "Failed" => 3,
+        _ => 4,
+    });
+
+    Json(TaskCenterSnapshot {
+        update_inventory,
+        downloads,
+    })
 }
 
 async fn export_cbz(

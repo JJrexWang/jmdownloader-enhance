@@ -108,6 +108,8 @@ function switchTab(name) {
   if (name === 'downloaded' && State.downloaded.list.length === 0) loadDownloaded();
   if (name === 'favorite' && State.fav.folders.length === 0) loadFavorite();
   if (name === 'weekly' && !State.weekly.info) loadWeekly();
+  if (name === 'tasks') startTaskCenterPoll();
+  else stopTaskCenterPoll();
 }
 
 // ----------- 搜索 -----------
@@ -1012,6 +1014,89 @@ async function refreshLogs() {
     const pre = $('#logs-content');
     pre.scrollTop = pre.scrollHeight;
   } catch (err) { $('#logs-content').textContent = '读取失败: ' + err.message; }
+}
+
+// ----------- 任务中心 -----------
+let taskCenterTimer = null;
+
+function startTaskCenterPoll() {
+  stopTaskCenterPoll();
+  loadTaskCenter();
+  // 每 3 秒拉一次快照，刷新也不丢（状态在服务端）
+  taskCenterTimer = setInterval(() => {
+    if (State.currentTab === 'tasks') loadTaskCenter();
+  }, 3000);
+}
+function stopTaskCenterPoll() {
+  if (taskCenterTimer) { clearInterval(taskCenterTimer); taskCenterTimer = null; }
+}
+
+async function loadTaskCenter() {
+  try {
+    const data = await API.get('/task-center');
+    renderTaskCenter(data);
+  } catch (err) {
+    $('#tc-update-status').innerHTML = `<p class="muted">加载失败: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderTaskCenter(data) {
+  const up = data.updateInventory || {};
+  const dls = data.downloads || [];
+
+  // --- 更新库存 ---
+  const statusEl = $('#tc-update-status');
+  const badge = up.status === 'running' ? '<span class="status-badge running">进行中</span>'
+    : up.status === 'done' ? '<span class="status-badge done">已完成</span>'
+    : '<span class="status-badge idle">空闲</span>';
+  let html = `<p>${badge}</p>`;
+  if (up.status === 'running' || up.status === 'done') {
+    html += `<p class="muted">进度：${up.current || 0} / ${up.total || 0} 本`;
+    if (up.currentComicTitle) html += `　当前：${escapeHtml(up.currentComicTitle)}`;
+    html += `</p>`;
+    html += `<p class="muted">新建下载任务：${up.newTasksCreated || 0} 个　失败跳过：${(up.failed || []).length} 本</p>`;
+    if (up.startedAt) html += `<p class="muted">开始：${escapeHtml(up.startedAt)}${up.finishedAt ? `　结束：${escapeHtml(up.finishedAt)}` : ''}</p>`;
+  } else {
+    html += `<p class="muted">尚未运行过更新库存。去「本地库存」点「更新库存」开始。</p>`;
+  }
+  statusEl.innerHTML = html;
+
+  // 进度条
+  const pw = $('#tc-update-progress');
+  if (up.status === 'running' && up.total > 0) {
+    pw.classList.remove('hidden');
+    const pct = Math.min(100, Math.round((up.current / up.total) * 100));
+    $('#tc-update-fill').style.width = pct + '%';
+    $('#tc-update-text').textContent = `${up.current} / ${up.total}（${pct}%）${up.currentComicTitle ? ' — ' + up.currentComicTitle : ''}`;
+  } else {
+    pw.classList.add('hidden');
+  }
+
+  // 失败列表
+  const fl = $('#tc-update-failed');
+  if ((up.failed || []).length > 0) {
+    fl.innerHTML = `<p class="muted" style="margin:8px 0 4px">失败跳过（${up.failed.length}）：</p>` +
+      up.failed.map(f => `<div class="failed-item">${escapeHtml(f.comicTitle)} <span class="muted">#${f.comicId}</span><br><span class="muted">${escapeHtml(f.reason)}</span></div>`).join('');
+  } else {
+    fl.innerHTML = '';
+  }
+
+  // --- 下载队列 ---
+  $('#tc-dl-count').textContent = dls.length ? `（${dls.length} 个任务）` : '';
+  const dlEl = $('#tc-downloads');
+  if (dls.length === 0) {
+    dlEl.innerHTML = '<p class="muted">暂无下载任务</p>';
+  } else {
+    const stateName = { Pending: '等待中', Downloading: '下载中', Paused: '已暂停', Completed: '已完成', Failed: '失败' };
+    dlEl.innerHTML = dls.map(d => {
+      const pct = d.total > 0 ? Math.min(100, Math.round((d.downloaded / d.total) * 100)) : 0;
+      return `<div class="dl-item">
+        <div class="dl-title">${escapeHtml(d.comicTitle)} — ${escapeHtml(d.chapterTitle)}</div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div class="dl-meta">${stateName[d.state] || d.state}　${d.downloaded}/${d.total} 张（${pct}%）</div>
+      </div>`;
+    }).join('');
+  }
 }
 
 // ----------- 启动 -----------

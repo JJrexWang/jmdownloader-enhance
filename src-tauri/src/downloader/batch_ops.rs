@@ -19,6 +19,7 @@ use crate::events::{
 };
 use crate::extensions::EyreReportToMessage;
 use crate::service::AppContext;
+use crate::task_center::task_center;
 use crate::types::{ChapterInfo, FavoriteSort};
 use crate::utils;
 
@@ -165,6 +166,8 @@ pub async fn update_downloaded_comics(ctx: &dyn AppContext) -> eyre::Result<()> 
     let total = downloaded_comics.len() as i64;
     let interval_sec = config.update_downloaded_comics_interval_sec;
     let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::GetComicStart { total });
+    // 任务中心持久化：刷新页面后可重新拉取进度
+    task_center().set_update_start(total);
 
     let id_to_dir_map = ctx
         .downloaded_comics_index()
@@ -180,6 +183,7 @@ pub async fn update_downloaded_comics(ctx: &dyn AppContext) -> eyre::Result<()> 
             total,
             current_comic_title: comic_title.clone(),
         });
+        task_center().set_update_progress(current, total, &comic_title);
 
         let comic = match utils::get_comic_with_map(ctx, comic_id, Arc::clone(&id_to_dir_map)).await {
             Ok(comic) => comic,
@@ -190,6 +194,7 @@ pub async fn update_downloaded_comics(ctx: &dyn AppContext) -> eyre::Result<()> 
                     comic_id,
                     comic_title: comic_title.clone(),
                 });
+                task_center().add_update_failed(comic_id, &comic_title, "获取漫画信息失败");
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
@@ -227,6 +232,7 @@ pub async fn update_downloaded_comics(ctx: &dyn AppContext) -> eyre::Result<()> 
             let current = idx as i64 + 1;
 
             let _ = download_manager.create_download_task(comic.clone(), chapter_id);
+            task_center().inc_update_new_tasks(1);
 
             let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::CreateDownloadTaskProgress {
                 comic_id: comic.id,
@@ -244,6 +250,7 @@ pub async fn update_downloaded_comics(ctx: &dyn AppContext) -> eyre::Result<()> 
     }
 
     let _ = dispatch_event(ctx, UpdateDownloadedComicsEvent::GetComicEnd);
+    task_center().set_update_done();
     Ok(())
 }
 

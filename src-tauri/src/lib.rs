@@ -28,6 +28,7 @@ pub mod service;
 #[cfg(test)]
 mod test_ctx;
 mod text;
+pub mod task_center;
 pub mod types;
 pub mod utils;
 
